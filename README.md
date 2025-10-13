@@ -10,6 +10,8 @@
 - Generates reports and performance metrics
 
 ## 🧱 Repository Structure
+
+```bash
 WGS_VarML/
 ├── README.md
 ├── requirements.txt
@@ -56,6 +58,7 @@ WGS_VarML/
     ├── test_feature_extraction.py
     ├── test_labeling.py
     └── test_train_model.py
+```
 
 See the `/src`, `/data`, `/models`, and `/results` directories for main components.
 
