@@ -28,7 +28,7 @@ WGS_VarML/
 ├── src/
 │   ├── __init__.py
 │   ├── download_giab.py       # Download and index GIAB truth VCFs
-│   ├── feature_extraction.py  # Parse VCFs → tabular features
+│   ├── extract_features.py  # Parse VCFs → tabular features
 │   ├── labeling.py            # Label variants as TP/FP via truth set
 │   ├── train_model.py         # Train RF/XGBoost/autoencoder models
 │   ├── evaluate_model.py      # Evaluate metrics, visualize feature importance
@@ -43,6 +43,9 @@ WGS_VarML/
 ├── models/
 │   ├── rf_model.joblib
 │   └── xgb_model.joblib
+│
+├── features/
+│    └── variant_features.csv
 │
 ├── results/
 │   ├── figures/
@@ -66,7 +69,15 @@ See the `/src`, `/data`, `/models`, and `/results` directories for main componen
 ```bash
 git clone https://github.com/<your_username>/VarML.git
 cd VarML
+```
+
+Install python environment and packages:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
+
 ```
 
 ## ▶️ Example Usage

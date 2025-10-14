@@ -1,0 +1,6 @@
+# Core dependencies
+pandas>=2.2.0
+
+
+# Bioinformatics
+pyvcf3>=1.0.3
