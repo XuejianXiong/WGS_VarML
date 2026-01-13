@@ -43,11 +43,32 @@ Only publicly available datasets are used.
 
 ## Repository Structure
 
-- `data/` – raw and processed datasets (not tracked)
-- `src/` – core ML and data processing code
-- `notebooks/` – exploratory analysis and visualization
-- `scripts/` – command-line entry points
-- `docker/` – lightweight Docker setup for reproducibility
+WGS_VarML/
+├── README.md
+├── pyproject.toml
+├── environment.yml
+├── .gitignore
+│
+├── docker/         – lightweight Docker setup for reproducibility
+│   └── Dockerfile
+│
+├── data/           – raw and processed datasets (not tracked)
+│   ├── raw/
+│   ├── processed/
+│   └── external/
+│
+├── src/            – core ML and data processing code
+│   ├── config/
+│   ├── data/
+│   ├── features/
+│   ├── models/
+│   ├── training/
+│   ├── evaluation/
+│   └── utils/
+│
+├── notebooks/     – exploratory analysis and visualization
+└── scripts/       – command-line entry points
+
 
 ## Reproducibility (Docker)
 
