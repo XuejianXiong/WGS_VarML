@@ -43,6 +43,7 @@ Only publicly available datasets are used.
 
 ## Repository Structure
 
+```bash
 WGS_VarML/
 ├── README.md
 ├── pyproject.toml
@@ -68,7 +69,7 @@ WGS_VarML/
 │
 ├── notebooks/     – exploratory analysis and visualization
 └── scripts/       – command-line entry points
-
+```
 
 ## Reproducibility (Docker)
 
