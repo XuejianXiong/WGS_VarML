@@ -68,6 +68,8 @@ WGS_VarML/
 │   └── utils/
 │
 ├── notebooks/     – exploratory analysis and visualization
+├── annotations/   – annotation configs
+├── tests/         – test code
 └── scripts/       – command-line entry points
 ```
 
