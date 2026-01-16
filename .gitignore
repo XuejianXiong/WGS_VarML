@@ -6,7 +6,7 @@ __pycache__/
 # Data
 data/raw/
 data/processed/
-data/external/
+data/reference/
 
 # Notebooks
 .ipynb_checkpoints/
@@ -16,3 +16,7 @@ data/external/
 
 # OS
 .DS_Store
+
+# VEP 
+115.zip
+ensembl-vep*
