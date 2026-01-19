@@ -1,0 +1,7 @@
+pandas=2.3.3
+cyvcf2=0.31.4
+logzero=1.7.0
+pytest
+black
+ruff
+mypy
