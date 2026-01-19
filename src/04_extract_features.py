@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 04_extract_features.py
 
@@ -9,166 +9,350 @@ Features:
 - One-hot encode Impact
 - Numeric columns: SIFT, PolyPhen
 - CLNSIG mapped to ML label (pathogenic=1, benign=0)
-- Optionally filter variants with unknown CLNSIG (--filter-unknown)
-- Explicit output format with --format csv|parquet
-- Professional logging with logzero
+- Optional filtering of unknown CLNSIG
+- Output as CSV or Parquet
+- Professional logging
 
 Usage:
-    python scripts/04_extract_features.py <input_vcf.gz> [output_file] [--filter-unknown] [--format csv|parquet]
+    python scripts/04_extract_features.py <input_vcf.gz> [output_file]
+        [--format csv|parquet]
+        [--filter-unknown]
 
 Examples:
     python scripts/04_extract_features.py data/processed/clinvar.vep.vcf.gz
-    python scripts/04_extract_features.py data/processed/clinvar.vep.vcf.gz data/features/clinvar_features.parquet --filter-unknown
-    python scripts/04_extract_features.py data/processed/clinvar.vep.vcf.gz --format csv
+    python scripts/04_extract_features.py data/processed/clinvar.vep.vcf.gz \
+        data/features/clinvar_features.parquet --format parquet --filter-unknown
 """
 
-import sys
-import os
-from typing import Tuple
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import NamedTuple, Optional, List
+
 import pandas as pd
 from cyvcf2 import VCF
 from logzero import logger, setup_logger
 
-# Configure logger
+# ------------------------------------------------------------------------------
+# Logging configuration
+# ------------------------------------------------------------------------------
 setup_logger()
 
-# ----------------------------
+
+# ------------------------------------------------------------------------------
+# Argument container
+# ------------------------------------------------------------------------------
+class Args(NamedTuple):
+    input_vcf: str
+    output_file: str
+    output_format: str
+    filter_unknown: bool
+
+
+# ------------------------------------------------------------------------------
 # Argument parsing
-# ----------------------------
-def parse_args() -> Tuple[str, str, str, bool]:
+# ------------------------------------------------------------------------------
+def parse_args() -> Args:
     """
     Parse command-line arguments.
 
-    Returns:
-        input_vcf: str - Path to input VEP-annotated VCF (.vcf.gz)
-        output_file: str - Path to save output features
-        output_ext: str - File extension: "csv" or "parquet"
-        filter_unknown: bool - Whether to remove variants with clnsig_label=-1
+    Returns
+    -------
+    Args
+        Parsed and validated arguments.
     """
-    if len(sys.argv) < 2:
-        logger.error("Missing input VCF argument.")
-        print(__doc__)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Extract ML-ready features from a VEP-annotated VCF file."
+    )
 
-    input_vcf = sys.argv[1]
-    if not os.path.exists(input_vcf):
-        logger.error(f"Input VCF does not exist: {input_vcf}")
-        sys.exit(1)
+    parser.add_argument(
+        "input_vcf",
+        type=str,
+        help="Path to input VEP-annotated VCF (.vcf.gz)",
+    )
 
-    # Default output file
-    output_file = None
-    output_ext = "csv"  # default
-    filter_unknown = False
+    parser.add_argument(
+        "output_file",
+        nargs="?",
+        default=None,
+        help="Output feature file (csv or parquet)",
+    )
 
-    # Parse remaining arguments
-    for arg in sys.argv[2:]:
-        if arg == "--filter-unknown":
-            filter_unknown = True
-        elif arg.startswith("--format"):
-            if "=" in arg:
-                output_ext = arg.split("=")[1].lower()
-            else:
-                logger.error("Use --format=csv or --format=parquet")
-                sys.exit(1)
-            if output_ext not in ["csv", "parquet"]:
-                logger.error("Invalid format. Use --format=csv or --format=parquet")
-                sys.exit(1)
-        else:
-            # assume it's output file path
-            output_file = arg
+    parser.add_argument(
+        "--format",
+        choices=["csv", "parquet"],
+        default="csv",
+        help="Output format (default: csv)",
+    )
 
-    if output_file is None:
-        output_file = os.path.splitext(input_vcf)[0] + f"_features.{output_ext}"
+    parser.add_argument(
+        "--filter-unknown",
+        action="store_true",
+        help="Remove variants with unknown CLNSIG labels",
+    )
+
+    args = parser.parse_args()
+
+    input_vcf = Path(args.input_vcf)
+    if not input_vcf.exists():
+        parser.error(f"Input VCF does not exist: {input_vcf}")
+
+    if args.output_file is None:
+        output_file = (
+            input_vcf
+            .with_suffix("")
+            .with_suffix(f".features.{args.format}")
+        )
     else:
-        # override extension if format is specified
-        output_file = os.path.splitext(output_file)[0] + f".{output_ext}"
+        output_file = Path(args.output_file).with_suffix(f".{args.format}")
 
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    return input_vcf, output_file, output_ext, filter_unknown
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
-# ----------------------------
-# Map CLNSIG to ML label
-# ----------------------------
-def map_clnsig_to_label(clnsig: str | None) -> int:
-    if clnsig is None:
+    parsed = Args(
+        input_vcf=str(input_vcf),
+        output_file=str(output_file),
+        output_format=args.format,
+        filter_unknown=args.filter_unknown,
+    )
+
+    logger.info(
+        "Arguments parsed | "
+        f"input_vcf={parsed.input_vcf}, "
+        f"output_file={parsed.output_file}, "
+        f"format={parsed.output_format}, "
+        f"filter_unknown={parsed.filter_unknown}"
+    )
+
+    return parsed
+
+
+# ------------------------------------------------------------------------------
+# CLNSIG → ML label mapping
+# ------------------------------------------------------------------------------
+def map_clnsig_to_label(clnsig: Optional[str]) -> int:
+    """
+    Map ClinVar CLNSIG to ML label.
+
+    Returns
+    -------
+    int
+        1 = pathogenic
+        0 = benign
+       -1 = unknown / excluded
+    """
+    if not clnsig:
         return -1
-    clnsig_lower = clnsig.lower()
-    if clnsig_lower in ["pathogenic", "likely_pathogenic"]:
+
+    clnsig = clnsig.lower()
+
+    if clnsig in {"pathogenic", "likely_pathogenic"}:
         return 1
-    elif clnsig_lower in ["benign", "likely_benign", "uncertain_significance"]:
+    if clnsig in {"benign", "likely_benign", "uncertain_significance"}:
         return 0
-    else:
-        return -1
 
-# ----------------------------
-# Read VCF and extract base fields
-# ----------------------------
+    return -1
+
+
+# ------------------------------------------------------------------------------
+# Read VCF
+# ------------------------------------------------------------------------------
 def read_vcf(input_vcf: str) -> pd.DataFrame:
+    """
+    Read a VEP-annotated VCF and extract features from the CSQ field.
+
+    Parameters
+    ----------
+    input_vcf : str
+        Path to VEP-annotated VCF (.vcf.gz)
+
+    Returns
+    -------
+    pd.DataFrame
+        Raw feature table
+    """
     logger.info(f"Reading VCF: {input_vcf}")
     vcf = VCF(input_vcf)
-    records = []
 
-    for variant in vcf:
-        info = variant.INFO
-        consequences = info.get("Consequence")
-        consequences_list = consequences.split(",") if consequences else []
+    # Extract CSQ field definition safely (cyvcf2-style)
+    csq_info = vcf.get_header_type("CSQ")
+    if csq_info is None:
+        raise RuntimeError("CSQ INFO field not found in VCF header")
+
+    csq_format = csq_info["Description"].split("Format: ")[1]
+    csq_fields = csq_format.split("|")
+
+    records: List[dict] = []
+
+    for var in vcf:
+        csq_raw = var.INFO.get("CSQ")
+
+        if csq_raw:
+            # Use first transcript annotation (standard ML practice)
+            csq_entry = csq_raw.split(",")[0]
+            csq_values = csq_entry.split("|")
+            csq = dict(zip(csq_fields, csq_values))
+        else:
+            csq = {}
+
+        consequence_list = (
+            csq.get("Consequence", "").split(",")
+            if csq.get("Consequence")
+            else []
+        )
+
+        impact = csq.get("Impact", "NA")
+        sift = float(csq["SIFT"]) if csq.get("SIFT") not in (None, "") else None
+        polyphen = float(csq["PolyPhen"]) if csq.get("PolyPhen") not in (None, "") else None
+        clnsig = csq.get("CLNSIG", "NA")
 
         records.append({
-            "chr": variant.CHROM,
-            "pos": variant.POS,
-            "ref": variant.REF,
-            "alt": ",".join(variant.ALT),
-            "impact": info.get("Impact") or "NA",
-            "sift": float(info.get("SIFT")) if info.get("SIFT") else None,
-            "polyphen": float(info.get("PolyPhen")) if info.get("PolyPhen") else None,
-            "clnsig": info.get("CLNSIG") or "NA",
-            "clnsig_label": map_clnsig_to_label(info.get("CLNSIG")),
-            "consequence_list": consequences_list
+            "chr": var.CHROM,
+            "pos": var.POS,
+            "ref": var.REF,
+            "alt": ",".join(var.ALT),
+            "impact": impact,
+            "sift": sift,
+            "polyphen": polyphen,
+            "clnsig": clnsig,
+            "clnsig_label": map_clnsig_to_label(clnsig),
+            "consequence_list": consequence_list,
         })
 
-    return pd.DataFrame(records)
-
-# ----------------------------
-# One-hot encode Consequence and Impact
-# ----------------------------
-def encode_features(df: pd.DataFrame) -> pd.DataFrame:
-    logger.info("One-hot encoding 'Consequence'")
-    all_consequences = set(c for row in df["consequence_list"] for c in row)
-    for cons in all_consequences:
-        df[f"cons_{cons}"] = df["consequence_list"].apply(lambda x: int(cons in x))
-    df.drop(columns=["consequence_list"], inplace=True)
-
-    logger.info("One-hot encoding 'Impact'")
-    impact_dummies = pd.get_dummies(df["impact"], prefix="impact")
-    df = pd.concat([df.drop(columns=["impact"]), impact_dummies], axis=1)
+    df = pd.DataFrame.from_records(records)
+    logger.info(f"Parsed {len(df)} variants from VCF")
 
     return df
 
-# ----------------------------
+
+# ------------------------------------------------------------------------------
+# Feature encoding
+# ------------------------------------------------------------------------------
+def _split_atomic_consequences(cons_list: List[str]) -> List[str]:
+    """
+    Split compound VEP consequences into atomic Sequence Ontology terms.
+
+    Example
+    -------
+    ["frameshift_variant&splice_region_variant"]
+    -> ["frameshift_variant", "splice_region_variant"]
+    """
+    if not cons_list:
+        return []
+
+    atoms = set()
+    for cons in cons_list:
+        atoms.update(cons.split("&"))
+
+    return sorted(atoms)
+
+
+def encode_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode VEP consequence and impact fields into ML-ready numeric features.
+
+    - Splits compound consequences into atomic SO terms
+    - One-hot encodes atomic consequences
+    - One-hot encodes IMPACT
+    - Ensures numeric dtypes (uint8)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing 'consequence_list' and 'impact'
+
+    Returns
+    -------
+    pd.DataFrame
+        ML-ready feature table
+    """
+    logger.info("Encoding atomic VEP consequences")
+
+    # Split compound consequences into atomic terms
+    df["atomic_consequences"] = df["consequence_list"].apply(
+        _split_atomic_consequences
+    )
+
+    cons_dummies = (
+        df["atomic_consequences"]
+        .explode()
+        .dropna()
+        .pipe(pd.get_dummies)
+        .groupby(level=0)
+        .max()
+        .add_prefix("cons_")
+        .astype("uint8")
+    )
+
+    df = pd.concat(
+        [df.drop(columns=["consequence_list", "atomic_consequences"]), cons_dummies],
+        axis=1,
+    )
+
+
+    # ----------------------------
+    # FIXED Impact encoding
+    # ----------------------------
+    logger.info("Encoding IMPACT")
+
+    df["impact"] = df["impact"].fillna("NA").astype(str)
+
+    impact_dummies = (
+        pd.get_dummies(df["impact"], prefix="impact")
+        .astype("uint8")
+    )
+
+    df = pd.concat(
+        [df.drop(columns=["impact"]), impact_dummies],
+        axis=1,
+    )
+
+
+    return df
+
+
+# ------------------------------------------------------------------------------
 # Save features
-# ----------------------------
-def save_features(df: pd.DataFrame, output_file: str, output_ext: str) -> None:
-    if output_ext == "csv":
+# ------------------------------------------------------------------------------
+def save_features(df: pd.DataFrame, output_file: str, fmt: str) -> None:
+    """
+    Save features to disk.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    output_file : str
+    fmt : str
+        csv or parquet
+    """
+    if fmt == "csv":
         df.to_csv(output_file, index=False)
     else:
         df.to_parquet(output_file, index=False)
-    logger.info(f"Features saved to {output_file}")
-    logger.info(f"Preview:\n{df.head()}")
 
-# ----------------------------
+    logger.info(f"Features written to {output_file}")
+    logger.info(f"Feature matrix shape: {df.shape}")
+
+
+# ------------------------------------------------------------------------------
 # Main
-# ----------------------------
+# ------------------------------------------------------------------------------
 def main() -> None:
-    input_vcf, output_file, output_ext, filter_unknown = parse_args()
-    df = read_vcf(input_vcf)
+    args = parse_args()
+
+    df = read_vcf(args.input_vcf)
     df = encode_features(df)
 
-    if filter_unknown:
-        initial_count = len(df)
+    if args.filter_unknown:
+        before = len(df)
         df = df[df["clnsig_label"] != -1].reset_index(drop=True)
-        logger.info(f"Filtered unknown CLNSIG variants: {initial_count - len(df)} removed, {len(df)} remaining")
+        logger.info(
+            f"Filtered unknown CLNSIG variants: "
+            f"{before - len(df)} removed, {len(df)} remaining"
+        )
 
-    save_features(df, output_file, output_ext)
+    save_features(df, args.output_file, args.output_format)
+
 
 if __name__ == "__main__":
     main()
