@@ -13,6 +13,7 @@ data/reference/
 
 # Environment
 .env
+.venv
 
 # OS
 .DS_Store
@@ -20,3 +21,6 @@ data/reference/
 # VEP 
 115.zip
 ensembl-vep*
+
+# test files
+test.py
