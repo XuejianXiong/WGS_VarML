@@ -7,7 +7,7 @@ Extract ML-ready features from a VEP-annotated VCF file.
 Features:
 - One-hot encode multi-value Consequence
 - One-hot encode Impact
-- Numeric columns: SIFT, PolyPhen
+- Numeric columns: SIFT, PolyPhen, Protein_position, DISTANCE
 - CLNSIG mapped to ML label (pathogenic=1, benign=0)
 - Optional filtering of unknown CLNSIG
 - Output as CSV or Parquet
@@ -19,8 +19,8 @@ Usage:
         [--filter-unknown]
 
 Examples:
-    python scripts/04_extract_features.py data/processed/clinvar.vep.vcf.gz
-    python scripts/04_extract_features.py data/processed/clinvar.vep.vcf.gz \
+    python3 src/04_extract_features.py data/processed/clinvar.vep.vcf.gz
+    python3 src/04_extract_features.py data/processed/clinvar.vep.vcf.gz \
         data/features/clinvar_features.parquet --format parquet --filter-unknown
 """
 
@@ -54,14 +54,6 @@ class Args(NamedTuple):
 # Argument parsing
 # ------------------------------------------------------------------------------
 def parse_args() -> Args:
-    """
-    Parse command-line arguments.
-
-    Returns
-    -------
-    Args
-        Parsed and validated arguments.
-    """
     parser = argparse.ArgumentParser(
         description="Extract ML-ready features from a VEP-annotated VCF file."
     )
@@ -131,26 +123,14 @@ def parse_args() -> Args:
 # CLNSIG → ML label mapping
 # ------------------------------------------------------------------------------
 def map_clnsig_to_label(clnsig: Optional[str]) -> int:
-    """
-    Map ClinVar CLNSIG to ML label.
-
-    Returns
-    -------
-    int
-        1 = pathogenic
-        0 = benign
-       -1 = unknown / excluded
-    """
     if not clnsig:
         return -1
 
     clnsig = clnsig.lower()
-
     if clnsig in {"pathogenic", "likely_pathogenic"}:
         return 1
     if clnsig in {"benign", "likely_benign", "uncertain_significance"}:
         return 0
-
     return -1
 
 
@@ -158,23 +138,10 @@ def map_clnsig_to_label(clnsig: Optional[str]) -> int:
 # Read VCF
 # ------------------------------------------------------------------------------
 def read_vcf(input_vcf: str) -> pd.DataFrame:
-    """
-    Read a VEP-annotated VCF and extract features from the CSQ field.
-
-    Parameters
-    ----------
-    input_vcf : str
-        Path to VEP-annotated VCF (.vcf.gz)
-
-    Returns
-    -------
-    pd.DataFrame
-        Raw feature table
-    """
     logger.info(f"Reading VCF: {input_vcf}")
     vcf = VCF(input_vcf)
 
-    # Extract CSQ field definition safely (cyvcf2-style)
+    # Extract CSQ field definition safely
     csq_info = vcf.get_header_type("CSQ")
     if csq_info is None:
         raise RuntimeError("CSQ INFO field not found in VCF header")
@@ -182,28 +149,58 @@ def read_vcf(input_vcf: str) -> pd.DataFrame:
     csq_format = csq_info["Description"].split("Format: ")[1]
     csq_fields = csq_format.split("|")
 
-    records: List[dict] = []
+    records: list[dict] = []
 
     for var in vcf:
         csq_raw = var.INFO.get("CSQ")
-
         if csq_raw:
-            # Use first transcript annotation (standard ML practice)
             csq_entry = csq_raw.split(",")[0]
             csq_values = csq_entry.split("|")
             csq = dict(zip(csq_fields, csq_values))
         else:
             csq = {}
 
+        # ----------------------------
+        # Safe parsing of numeric fields
+        # ----------------------------
+        # Protein_position: handle ranges
+        protein_position_raw = csq.get("Protein_position")
+        if protein_position_raw:
+            if "-" in protein_position_raw:
+                try:
+                    protein_position = int(protein_position_raw.split("-")[0])
+                except ValueError:
+                    protein_position = None
+            else:
+                try:
+                    protein_position = int(protein_position_raw)
+                except ValueError:
+                    protein_position = None
+        else:
+            protein_position = None
+
+        # SIFT & PolyPhen
+        try:
+            sift = float(csq["SIFT"]) if csq.get("SIFT") not in (None, "") else None
+        except ValueError:
+            sift = None
+
+        try:
+            polyphen = float(csq["PolyPhen"]) if csq.get("PolyPhen") not in (None, "") else None
+        except ValueError:
+            polyphen = None
+
+        # DISTANCE
+        try:
+            distance = int(csq["DISTANCE"]) if csq.get("DISTANCE") not in (None, "") else None
+        except ValueError:
+            distance = None
+
+        # Consequences
         consequence_list = (
-            csq.get("Consequence", "").split(",")
-            if csq.get("Consequence")
-            else []
+            csq.get("Consequence", "").split(",") if csq.get("Consequence") else []
         )
 
-        impact = csq.get("Impact", "NA")
-        sift = float(csq["SIFT"]) if csq.get("SIFT") not in (None, "") else None
-        polyphen = float(csq["PolyPhen"]) if csq.get("PolyPhen") not in (None, "") else None
         clnsig = csq.get("CLNSIG", "NA")
 
         records.append({
@@ -211,9 +208,11 @@ def read_vcf(input_vcf: str) -> pd.DataFrame:
             "pos": var.POS,
             "ref": var.REF,
             "alt": ",".join(var.ALT),
-            "impact": impact,
+            "impact": csq.get("IMPACT", "NA"),
             "sift": sift,
             "polyphen": polyphen,
+            "protein_position": protein_position,
+            "distance": distance,
             "clnsig": clnsig,
             "clnsig_label": map_clnsig_to_label(clnsig),
             "consequence_list": consequence_list,
@@ -221,7 +220,6 @@ def read_vcf(input_vcf: str) -> pd.DataFrame:
 
     df = pd.DataFrame.from_records(records)
     logger.info(f"Parsed {len(df)} variants from VCF")
-
     return df
 
 
@@ -229,14 +227,6 @@ def read_vcf(input_vcf: str) -> pd.DataFrame:
 # Feature encoding
 # ------------------------------------------------------------------------------
 def _split_atomic_consequences(cons_list: List[str]) -> List[str]:
-    """
-    Split compound VEP consequences into atomic Sequence Ontology terms.
-
-    Example
-    -------
-    ["frameshift_variant&splice_region_variant"]
-    -> ["frameshift_variant", "splice_region_variant"]
-    """
     if not cons_list:
         return []
 
@@ -248,30 +238,10 @@ def _split_atomic_consequences(cons_list: List[str]) -> List[str]:
 
 
 def encode_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Encode VEP consequence and impact fields into ML-ready numeric features.
-
-    - Splits compound consequences into atomic SO terms
-    - One-hot encodes atomic consequences
-    - One-hot encodes IMPACT
-    - Ensures numeric dtypes (uint8)
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        DataFrame containing 'consequence_list' and 'impact'
-
-    Returns
-    -------
-    pd.DataFrame
-        ML-ready feature table
-    """
     logger.info("Encoding atomic VEP consequences")
 
     # Split compound consequences into atomic terms
-    df["atomic_consequences"] = df["consequence_list"].apply(
-        _split_atomic_consequences
-    )
+    df["atomic_consequences"] = df["consequence_list"].apply(_split_atomic_consequences)
 
     cons_dummies = (
         df["atomic_consequences"]
@@ -284,29 +254,22 @@ def encode_features(df: pd.DataFrame) -> pd.DataFrame:
         .astype("uint8")
     )
 
-    df = pd.concat(
-        [df.drop(columns=["consequence_list", "atomic_consequences"]), cons_dummies],
-        axis=1,
-    )
-
+    df = pd.concat([df.drop(columns=["consequence_list", "atomic_consequences"]), cons_dummies], axis=1)
 
     # ----------------------------
-    # FIXED Impact encoding
+    # IMPACT encoding
     # ----------------------------
     logger.info("Encoding IMPACT")
-
     df["impact"] = df["impact"].fillna("NA").astype(str)
+    impact_dummies = pd.get_dummies(df["impact"], prefix="impact").astype("uint8")
+    df = pd.concat([df.drop(columns=["impact"]), impact_dummies], axis=1)
 
-    impact_dummies = (
-        pd.get_dummies(df["impact"], prefix="impact")
-        .astype("uint8")
-    )
-
-    df = pd.concat(
-        [df.drop(columns=["impact"]), impact_dummies],
-        axis=1,
-    )
-
+    # ----------------------------
+    # Ensure numeric columns
+    # ----------------------------
+    for col in ["sift", "polyphen", "protein_position", "distance"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
     return df
 
@@ -315,16 +278,6 @@ def encode_features(df: pd.DataFrame) -> pd.DataFrame:
 # Save features
 # ------------------------------------------------------------------------------
 def save_features(df: pd.DataFrame, output_file: str, fmt: str) -> None:
-    """
-    Save features to disk.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-    output_file : str
-    fmt : str
-        csv or parquet
-    """
     if fmt == "csv":
         df.to_csv(output_file, index=False)
     else:
@@ -339,7 +292,6 @@ def save_features(df: pd.DataFrame, output_file: str, fmt: str) -> None:
 # ------------------------------------------------------------------------------
 def main() -> None:
     args = parse_args()
-
     df = read_vcf(args.input_vcf)
     df = encode_features(df)
 
@@ -347,8 +299,7 @@ def main() -> None:
         before = len(df)
         df = df[df["clnsig_label"] != -1].reset_index(drop=True)
         logger.info(
-            f"Filtered unknown CLNSIG variants: "
-            f"{before - len(df)} removed, {len(df)} remaining"
+            f"Filtered unknown CLNSIG variants: {before - len(df)} removed, {len(df)} remaining"
         )
 
     save_features(df, args.output_file, args.output_format)

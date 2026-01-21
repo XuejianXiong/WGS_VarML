@@ -24,3 +24,4 @@ ensembl-vep*
 
 # test files
 test.py
+src/*_v1.py
