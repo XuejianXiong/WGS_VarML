@@ -129,7 +129,7 @@ def map_clnsig_to_label(clnsig: Optional[str]) -> int:
     clnsig = clnsig.lower()
     if clnsig in {"pathogenic", "likely_pathogenic"}:
         return 1
-    if clnsig in {"benign", "likely_benign", "uncertain_significance"}:
+    if clnsig in {"benign", "likely_benign"}:
         return 0
     return -1
 
@@ -201,7 +201,10 @@ def read_vcf(input_vcf: str) -> pd.DataFrame:
             csq.get("Consequence", "").split(",") if csq.get("Consequence") else []
         )
 
-        clnsig = csq.get("CLNSIG", "NA")
+        # CLNSIG (ClinVar) — INFO-level, not CSQ
+        clnsig = var.INFO.get("CLNSIG")
+        if isinstance(clnsig, list):
+            clnsig = clnsig[0]
 
         records.append({
             "chr": var.CHROM,
