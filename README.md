@@ -40,12 +40,7 @@ WGS_VarML/
 │
 ├── src/            – core ML and data processing code
 │   ├── 04_feature_extraction.py        - extract ML-ready features from VEP-annotated VCF
-│   ├── config/
-│   ├── data/
-│   ├── features/
-│   ├── models/
-│   ├── training/
-│   ├── evaluation/
+│   ├── 05_QC_features.py               - generate feature QC report
 │   └── utils/
 │
 ├── scripts/       – command-line entry points
