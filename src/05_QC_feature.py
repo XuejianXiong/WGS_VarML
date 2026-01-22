@@ -161,16 +161,28 @@ def histogram_section(df: pd.DataFrame) -> str:
 
 
 def clnsig_section(df: pd.DataFrame) -> str:
+    CLNSIG_LABEL_MAP = {
+          -1: "unknown",
+          0: "benign",
+          1: "pathogenic"
+    }
+
     if "clnsig_label" not in df.columns:
         return ""
 
+    # Skip if all unknown
     if df["clnsig_label"].nunique() == 1 and df["clnsig_label"].iloc[0] == -1:
-        logger.info("CLNSIG labels all -1; skipping CLNSIG section")
+        logger.info("CLNSIG labels all unknown; skipping CLNSIG section")
         return ""
 
-    counts = df["clnsig_label"].value_counts().rename("count")
+    # Map numeric labels to human-readable
+    df_labels = df["clnsig_label"].map(CLNSIG_LABEL_MAP)
+
+    counts = df_labels.value_counts().rename("count")
+    counts.index.name = None    
+
     fig, ax = plt.subplots(figsize=(4, 3))
-    counts.plot(kind="bar", ax=ax, edgecolor="black", color="skyblue")
+    counts.plot(kind="bar", ax=ax, edgecolor="black", color=["orange", "green", "red"])
     ax.set_title("CLNSIG Label Distribution")
     ax.set_xlabel("Label")
     ax.set_ylabel("Count")
