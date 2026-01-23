@@ -8,6 +8,9 @@ data/raw/
 data/processed/
 data/reference/
 
+# Results
+results/
+
 # Notebooks
 .ipynb_checkpoints/
 
@@ -25,3 +28,4 @@ ensembl-vep*
 # test files
 test.py
 src/*_v1.py
+src/*_v2.py

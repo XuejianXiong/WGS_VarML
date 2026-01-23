@@ -48,9 +48,11 @@ WGS_VarML/
 │   ├── 02_preprocess_clinvar.sh        - normalize, filter, and prepare ClinVar VCF
 │   └── 03_run_vep_docker.sh            - annotate variants with VEP inside Docker
 │
-├── notebooks/     – exploratory analysis and visualization
-├── annotations/   – annotation configs
-└── tests/         – test code
+├── config/         – configuration files
+├── results/        – output results
+├── notebooks/      – exploratory analysis and visualization
+├── annotations/    – annotation configs
+└── tests/          – test code
 ```
 
 ## Feature Extraction
