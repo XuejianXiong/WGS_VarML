@@ -40,38 +40,38 @@ WGS_VarML/
 │
 ├── src/            – core ML and data processing code
 │   ├── 04_feature_extraction.py        - extract ML-ready features from VEP-annotated VCF
-│   ├── 05_QC_features.py               - generate feature QC report
+│   ├── 05_QC_features.py     - generate feature QC report
+│   ├── 06_train_model.py     - train ML model
 │   └── utils/
+│         └── config.py       - load configuration parameters       
 │
 ├── scripts/       – command-line entry points
 │   ├── 01_download_data.sh             - download ClinVar and other reference datasets
 │   ├── 02_preprocess_clinvar.sh        - normalize, filter, and prepare ClinVar VCF
 │   └── 03_run_vep_docker.sh            - annotate variants with VEP inside Docker
 │
-├── notebooks/     – exploratory analysis and visualization
-├── annotations/   – annotation configs
-└── tests/         – test code
+├── config/
+│   └── config.yaml - configuration file
+├── notebooks/      – exploratory analysis and visualization
+├── annotations/    – annotation configs
+└── tests/          – test code
 ```
 
 ## Feature Extraction
 
-The 04_feature_extraction.py script performs:
+The feature extraction step includes:
 
 - One-hot encoding of multi-value Consequence and single-value Impact
 - Retains numeric scores such as SIFT and PolyPhen
 - Maps CLNSIG to numeric ML labels (1=pathogenic, 0=benign, -1=unknown)
-- Optionally filters unknown variants with --filter-unknown
+- Optionally filters unknown variants (CLNSIG=-1) with --filter-unknown
 - Saves output as CSV or Parquet for downstream ML
+- Generate QC report (in html format)
 
 ```bash
-# Default CSV output
-python scripts/04_feature_extraction.py data/processed/clinvar.vep.vcf.gz
+python3 scripts/04_feature_extraction.py data/processed/clinvar.vep.vcf.gz --config config/config.yaml
 
-# Filter unknown labels and save as Parquet
-python scripts/04_feature_extraction.py data/processed/clinvar.vep.vcf.gz --filter-unknown --format=parquet
-
-# Custom output filename
-python scripts/04_feature_extraction.py data/processed/clinvar.vep.vcf.gz data/features/clinvar_ml_ready.csv --filter-unknown
+python3 src/05_QC_feature.py data/processed/clinvar.vep.features.csv results/qc_report.html config/config.yaml
 ```
 
 ## Machine Learning Tasks
@@ -80,18 +80,22 @@ python scripts/04_feature_extraction.py data/processed/clinvar.vep.vcf.gz data/f
 - Class imbalance handling
 - Chromosome-aware train/validation/test splits
 
-## Models
+### Models
 
 - Logistic Regression (baseline)
 - Random Forest
 - Gradient Boosting (XGBoost / LightGBM)
 
-## Evaluation Metrics
+### Evaluation Metrics
 
 - ROC-AUC
 - Precision–Recall AUC
 - Confusion matrix
 - Calibration analysis
+
+```bash
+python3 src/06_train_model.py data/processed/clinvar.vep.features.csv --config config/config.yaml
+```
 
 ## Reproducibility (Docker)
 

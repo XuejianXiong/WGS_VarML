@@ -1,0 +1,30 @@
+extract:
+  format: parquet         # output format csv/parquet, default is csv
+  filter_unknown: true    # filter out unknown CLNSIG, default is False
+
+qc:
+  numeric_cols:
+    - sift
+    - polyphen
+    - protein_position
+    - distance
+
+  #distance_clip_pct: 0.99
+  #distance_clip_note: "Histogram clipped at 99th percentile for visualization; underlying distances unchanged."
+  distance_clip_pct: None
+  distance_clip_note: ""
+
+  top_consequences: 15
+  random_samples: 10
+
+
+train:
+  test_size: 0.2
+  random_state: 42
+
+  model:
+    type: random_forest
+    n_estimators: 200         # Number of trees in the forest.
+    max_depth: 12             # Maximum depth of each decision tree.
+    class_weight: balanced    # Adjusts weights inversely proportional to class frequencies.
+    n_jobs: -1                # Number of CPU cores to use for training, and -1 means use all available cores
