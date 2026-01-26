@@ -59,13 +59,14 @@ WGS_VarML/
 
 ## Feature Extraction
 
-The 04_extract_features.py script performs:
+The feature extraction step includes:
 
 - One-hot encoding of multi-value Consequence and single-value Impact
 - Retains numeric scores such as SIFT and PolyPhen
 - Maps CLNSIG to numeric ML labels (1=pathogenic, 0=benign, -1=unknown)
-- Optionally filters unknown variants with --filter-unknown
+- Optionally filters unknown variants (CLNSIG=-1) with --filter-unknown
 - Saves output as CSV or Parquet for downstream ML
+- Generate QC report (in html format)
 
 ```bash
 python3 scripts/04_feature_extraction.py data/processed/clinvar.vep.vcf.gz --config config/config.yaml
