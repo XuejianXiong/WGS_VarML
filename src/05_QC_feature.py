@@ -4,22 +4,26 @@
 
 Generate an HTML QC-check report for ML-ready VEP feature matrices.
 
-This version supports an OPTIONAL YAML config file to control:
-- Which numeric features are summarized and plotted
-- Histogram clipping behavior
-- Number of top consequences
-- Number of random samples shown
+Report sections (in order):
+1. Numeric feature summary
+2. Numeric feature histograms (conditional)
+3. CLNSIG label distribution (conditional)
+4. Impact frequencies
+5. Top consequences
+6. Missing value summary
+7. Random sample of variants
 
-If no YAML is provided, sensible defaults are used.
+Notes:
+- Production-safe for multi-million rows
+- Skip empty / degenerate features automatically
+- Clear logging
+- Support a YAML config file
 
 Usage:
-    python3 src/05_QC_feature.py <features_csv>
-    python3 src/05_QC_feature.py <features_csv> <output.html>
     python3 src/05_QC_feature.py <features_csv> <output.html> <config.yaml>
 
 Example:
-    python3 src/05_QC_feature.py data/processed/clinvar.vep.features.csv \
-        results/qc_report.html config/config.yaml
+    python3 src/05_QC_feature.py data/processed/clinvar.vep.features.csv results/qc_report.html config/config.yaml
 """
 
 from __future__ import annotations
@@ -33,9 +37,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import cm
-import yaml
 
 from logzero import logger, setup_logger
+
+# Shared config utilities
+from utils.config import load_config, resolve
 
 # ------------------------------------------------------------------------------
 # Logging
@@ -46,36 +52,36 @@ setup_logger()
 # ------------------------------------------------------------------------------
 # Utilities
 # ------------------------------------------------------------------------------
-def load_config(config_path: Path | None) -> dict:
-    """
-    Load YAML configuration file.
-
-    If no config is provided, return an empty dict so defaults apply.
-    """
-    if config_path is None:
-        return {}
-
-    logger.info(f"Loading config: {config_path}")
-    with open(config_path) as f:
-        return yaml.safe_load(f)
-
-
 def fig_to_base64(fig: plt.Figure) -> str:
     """
-    Convert a matplotlib figure to a base64-encoded PNG
-    so it can be embedded directly in HTML.
+    Convert a matplotlib Figure into a base64-encoded PNG string.
+
+    This allows the figure to be embedded directly into HTML using:
+        <img src="data:image/png;base64,...">
     """
-    buf = BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", dpi=120)
+    # Create an in-memory binary buffer
+    buffer = BytesIO()
+
+    # Save the figure into the buffer as a PNG image
+    fig.savefig(
+        buffer,
+        format="png",
+        bbox_inches="tight",
+        dpi=120,
+    )
     plt.close(fig)
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    # Convert the buffer contents to base64-encoded text
+    image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+    return image_base64
 
 
 def html_table(df: pd.DataFrame, max_rows: int = 20) -> str:
     """
-    Render a compact HTML table (not full width).
+    Render a compact HTML table.
     """
-    return (
+    html = (
         df.head(max_rows)
         .to_html(
             border=0,
@@ -85,6 +91,7 @@ def html_table(df: pd.DataFrame, max_rows: int = 20) -> str:
         )
     )
 
+    return html
 
 # ------------------------------------------------------------------------------
 # Plotting helpers
@@ -98,10 +105,10 @@ def plot_numeric_histogram(
     color: str | None = None,
 ) -> str:
     """
-    Safely plot a numeric histogram if data exists.
+    Plot a numeric histogram if data exists.
 
-    Optionally clips values at the 99th percentile for visualization
-    (does NOT change underlying data).
+    Clipping (if enabled) affects visualization only,
+    never the underlying data.
     """
     values = series.dropna()
     if values.empty:
@@ -140,22 +147,19 @@ def plot_numeric_histogram(
 # ------------------------------------------------------------------------------
 def numeric_summary_section(df: pd.DataFrame, numeric_cols: list[str]) -> str:
     """
-    Summary statistics (count, mean, std, quartiles) for numeric features.
+    Summary statistics for numeric features.
     """
-    
-    # Keep only numeric columns that actually exist in the dataframe
     present = [c for c in numeric_cols if c in df.columns]
-    # If no numeric features are present, skip this section
     if not present:
         return ""
 
-    # Compute summary statistics
     summary = df[present].describe().T
 
     html = f"""
-          <h2>Numeric Features Summary</h2>
-          {html_table(summary)}
-          """
+            <h2>Numeric Features Summary</h2>
+            {html_table(summary)}
+            """
+
     return html
 
 
@@ -166,11 +170,10 @@ def histogram_section(
     clip_note: str | None,
 ) -> str:
     """
-    Histograms for numeric features.
+    Plotting histograms for numeric features.
     """
     html = "<h2>Numeric Feature Distributions</h2>"
 
-    # Fixed colors so reports are visually consistent
     colors = {
         "sift": "skyblue",
         "polyphen": "salmon",
@@ -196,7 +199,7 @@ def histogram_section(
 
 def clnsig_section(df: pd.DataFrame) -> str:
     """
-    CLNSIG label distribution (if labels exist and are not all unknown).
+    CLNSIG label distribution (skipped if all unknown).
     """
     CLNSIG_LABEL_MAP = {
         -1: "unknown",
@@ -207,7 +210,6 @@ def clnsig_section(df: pd.DataFrame) -> str:
     if "clnsig_label" not in df.columns:
         return ""
 
-    # Skip if all labels are unknown
     if df["clnsig_label"].nunique() == 1 and df["clnsig_label"].iloc[0] == -1:
         logger.info("CLNSIG labels all unknown; skipping CLNSIG section")
         return ""
@@ -224,17 +226,17 @@ def clnsig_section(df: pd.DataFrame) -> str:
     img = fig_to_base64(fig)
 
     html = f"""
-          <h2>CLNSIG Label Distribution</h2>
-          {html_table(counts.to_frame())}
-          <img src="data:image/png;base64,{img}">
-          """
-    
+            <h2>CLNSIG Label Distribution</h2>
+            {html_table(counts.to_frame())}
+            <img src="data:image/png;base64,{img}">
+            """
+            
     return html
 
 
 def impact_section(df: pd.DataFrame) -> str:
     """
-    Frequency of VEP impact categories (impact_* columns).
+    VEP impact frequency summary.
     """
     impact_cols = [c for c in df.columns if c.startswith("impact_")]
     if not impact_cols:
@@ -251,17 +253,16 @@ def impact_section(df: pd.DataFrame) -> str:
     img = fig_to_base64(fig)
 
     html = f"""
-          <h2>Impact Frequencies</h2>
-          {html_table(counts.to_frame(name="count"))}
-          <img src="data:image/png;base64,{img}">
-          """
-    
+            <h2>Impact Frequencies</h2>
+            {html_table(counts.to_frame(name="count"))}
+            <img src="data:image/png;base64,{img}">
+            """
     return html
 
 
 def consequence_section(df: pd.DataFrame, n_cons: int) -> str:
     """
-    Top N VEP consequences by frequency.
+    Top N VEP consequences.
     """
     cons_cols = [c for c in df.columns if c.startswith("cons_")]
     if not cons_cols:
@@ -284,64 +285,64 @@ def consequence_section(df: pd.DataFrame, n_cons: int) -> str:
     img = fig_to_base64(fig)
 
     html = f"""
-          <h2>Top {n_cons} Consequences</h2>
-          {html_table(counts.to_frame(name="count"))}
-          <img src="data:image/png;base64,{img}">
-          """
-
+            <h2>Top {n_cons} Consequences</h2>
+            {html_table(counts.to_frame(name="count"))}
+            <img src="data:image/png;base64,{img}">
+            """
     return html
 
 
 def missing_values_section(df: pd.DataFrame) -> str:
     """
-    Missing value counts per column.
+    Missing value summary.
     """
     missing = df.isna().sum()
     missing = missing[missing > 0].sort_values(ascending=False)
 
     html = f"""
-          <h2>Missing Values</h2>
-          {html_table(missing.to_frame(name="missing_count"))}
-          """
+            <h2>Missing Values</h2>
+            {html_table(missing.to_frame(name="missing_count"))}
+            """
 
     return html
 
 
 def sample_section(df: pd.DataFrame, n_sample: int) -> str:
     """
-    Random sample of variants for manual inspection.
+    Random sample of variants.
     """
     sample = df.sample(n=n_sample, random_state=42)
 
     html = f"""
-          <h2>Random Sample ({n_sample} variants)</h2>
-          {html_table(sample, max_rows=n_sample)}
-          """
-    
+            <h2>Random Sample ({n_sample} variants)</h2>
+            {html_table(sample, max_rows=n_sample)}
+            """
+
     return html
 
 
 # ------------------------------------------------------------------------------
-# Main report generator
+# Report generator
 # ------------------------------------------------------------------------------
 def generate_report(df: pd.DataFrame, config: dict, output_html: str) -> None:
     """
-    Generate the full HTML QC report using config-driven parameters.
+    Generate QC report using config-driven parameters.
     """
 
-    # Load the configurate parameters. If without them, use the default values
-    ## If config contains a "qc" section, use it. Otherwise, use an empty dictionary
     qc_cfg = config.get("qc", {})
 
-    numeric_cols = qc_cfg.get(
-        "numeric_cols",
+    numeric_cols = resolve(
+        None,
+        qc_cfg.get("numeric_cols"),
         ["sift", "polyphen", "protein_position", "distance"],
     )
-    n_cons = qc_cfg.get("top_consequences", 10)
-    n_samples = qc_cfg.get("random_samples", 5)
-    clip_distance = qc_cfg.get("distance_clip_pct") is not None
-    clip_note = qc_cfg.get("distance_clip_note")
 
+    n_cons = resolve(None, qc_cfg.get("top_consequences"), 10)
+    n_samples = resolve(None, qc_cfg.get("random_samples"), 5)
+
+    clip_pct = qc_cfg.get("distance_clip_pct")
+    clip_distance = clip_pct is not None
+    clip_note = qc_cfg.get("distance_clip_note")
 
     logger.info(f"Generating HTML QC report: {output_html}")
 
@@ -401,7 +402,15 @@ def main() -> None:
     config = load_config(config_path)
 
     logger.info(f"Reading feature matrix: {features_csv}")
-    df = pd.read_csv(features_csv, low_memory=False)
+    suffix = features_csv.suffix.lower()
+    
+    if suffix == ".csv":
+        df = pd.read_csv(features_csv, low_memory=False)
+    elif suffix == ".parquet":
+        df = pd.read_parquet(features_csv)
+    else:
+        raise ValueError(f"Unsupported feature format: {suffix}")
+    
     logger.info(f"Feature matrix shape: {df.shape}")
 
     generate_report(df, config, str(output_html))

@@ -1,3 +1,7 @@
+extract:
+  format: parquet         # output format csv/parquet, default is csv
+  filter_unknown: true    # filter out unknown CLNSIG, default is False
+
 qc:
   numeric_cols:
     - sift
