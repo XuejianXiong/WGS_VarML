@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-07_predict.py
+08_model_inference.py
 
 Run inference using a trained ML model for ClinVar pathogenicity prediction.
 
@@ -15,11 +15,11 @@ Pipeline
 
 Usage
 -----
-    python3 src/07_predict.py <features_csv> <model_dir> --outdir <outdir>
+    python3 src/08_model_inference.py <features_csv_or_parquet> <model_dir> --outdir <outdir>
 
 Example
 -------
-    python3 src/07_predict.py data/processed/new_variants.vep.features.csv results/models --outdir results/predictions
+    python3 src/08_model_inference.py data/splits/clinvar.vep.features.infer.parquet results/models --outdir results/predictions
 """
 
 from __future__ import annotations
