@@ -39,11 +39,13 @@ WGS_VarML/
 │   └── processed/
 │
 ├── src/            – core ML and data processing code
-│   ├── 04_feature_extraction.py        - extract ML-ready features from VEP-annotated VCF
-│   ├── 05_QC_features.py     - generate feature QC report
-│   ├── 06_train_model.py     - train ML model
+│   ├── 04_extract_features.py   - extract ML-ready features from VEP-annotated VCF
+│   ├── 05_QC_feature.py         - generate feature QC report
+│   ├── 06_split_clinvar.py      - split data into train / test / infer
+│   ├── 07_train_model.py        - train ML model
+│   ├── 08_model_inference.py    - run inference on unlabeled data
 │   └── utils/
-│         └── config.py       - load configuration parameters       
+│         └── config.py          - load configuration parameters       
 │
 ├── scripts/       – command-line entry points
 │   ├── 01_download_data.sh             - download ClinVar and other reference datasets
@@ -94,7 +96,9 @@ python3 src/05_QC_feature.py data/processed/clinvar.vep.features.csv results/qc_
 - Calibration analysis
 
 ```bash
-python3 src/06_train_model.py data/processed/clinvar.vep.features.csv --config config/config.yaml
+python3 src/06_split_clinvar.py --input data/processed/clinvar.vep.features.parquet --outdir data/splits --config config/config.yaml
+python3 src/07_train_model.py data/splits/clinvar.vep.features.train.parquet --outdir results/models --config config/config.yaml --test-set data/splits/clinvar.vep.features.test.parquet
+python3 src/08_model_inference.py data/splits/clinvar.vep.features.infer.parquet results/models --outdir results/predictions
 ```
 
 ## Reproducibility (Docker)

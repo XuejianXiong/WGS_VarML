@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-06_train_model.py
+07_train_model.py
 
 Train a baseline ML model for ClinVar pathogenicity prediction
 using VEP-derived features.
@@ -16,19 +16,14 @@ Pipeline
 7. Evaluate model
 8. Save model, metrics, and feature importance
 
-Notes
------
-- Unknown CLNSIG (-1) is excluded from training
-- Designed for large datasets (millions of rows)
-- Support a YAML config file. If no YAML is provided, default values are used.
-
 Usage:
------
-    python3 src/06_train_model.py <features_csv> <output_dir> <config.yaml>
+------
+    python src/07_train_model.py <train_features_csv_or_parquet> [--outdir DIR] [--config CONFIG] [--test-set TEST_PARQUET]
 
-Example
------
-    python src/06_train_model.py data/processed/clinvar.vep.features.csv --outdir results/models --config config/config.yaml
+Example:
+------
+    python3 src/07_train_model.py data/splits/clinvar.vep.features.train.csv --outdir results/models --config config/config.yaml
+    python3 src/07_train_model.py data/splits/clinvar.vep.features.train.csv --outdir results/models --config config/config.yaml --test-set data/splits/clinvar.vep.features.test.csv
 """
 
 from __future__ import annotations
@@ -36,12 +31,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import joblib
-
 import pandas as pd
 from logzero import logger, setup_logger
-
 from sklearn.model_selection import train_test_split
-from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     classification_report,
@@ -51,6 +43,12 @@ from sklearn.metrics import (
 
 # Shared config utilities
 from utils.config import load_config
+from utils.ml_utils import (
+    select_features,
+    handle_missing_values,
+    save_artifacts,
+    align_features,
+)
 
 # ------------------------------------------------------------------------------
 # Logging
@@ -62,21 +60,27 @@ setup_logger()
 # Argument parsing
 # ------------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
+    """
+    Parse command-line arguments: training data path, output dir, config, optional test set.
+    """
     parser = argparse.ArgumentParser(
         description="Train ML model on ClinVar VEP features"
     )
-
-    parser.add_argument("features", type=str)
-
+    # Positional: path to training split (from 06_split_clinvar)
     parser.add_argument(
-        "--outdir", type=str, default="results/models"
+        "features",
+        type=str,
+        help="Training feature CSV/Parquet (e.g. clinvar.vep.features.train.parquet)",
     )
-
+    parser.add_argument("--outdir", type=str, default="results/models")
+    parser.add_argument("--config", type=str, default=None, help="Optional YAML config")
+    # If provided, run final evaluation on this held-out set and write test_metrics.csv
     parser.add_argument(
-        "--config", type=str, default=None,
-        help="Optional YAML configuration file"
+        "--test-set",
+        type=str,
+        default=None,
+        help="Optional held-out test set for final evaluation (e.g. clinvar.vep.features.test.parquet)",
     )
-
     return parser.parse_args()
 
 
@@ -85,78 +89,28 @@ def parse_args() -> argparse.Namespace:
 # ------------------------------------------------------------------------------
 def load_features(path: Path) -> pd.DataFrame:
     """
-    Load feature matrix from CSV or Parquet.
+    Load feature matrix from CSV or Parquet. Returns full table with variant IDs and labels.
     """
     logger.info(f"Loading feature matrix: {path}")
-
     suffix = path.suffix.lower()
-
     if suffix == ".csv":
         df = pd.read_csv(path, low_memory=False)
     elif suffix == ".parquet":
         df = pd.read_parquet(path)
     else:
         raise ValueError(f"Unsupported feature format: {suffix}")
-
     logger.info(f"Initial dataset shape: {df.shape}")
     return df
 
 
 def filter_valid_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Keep only rows with valid binary CLNSIG labels (0/1).
+    Keep only rows with binary pathogenicity labels (0 = benign, 1 = pathogenic).
     """
     logger.info("Filtering valid CLNSIG labels (0/1)")
     df = df[df["clnsig_label"].isin([0, 1])].copy()
     logger.info(f"After filtering: {df.shape}")
     return df
-
-
-# ------------------------------------------------------------------------------
-# Feature selection
-# ------------------------------------------------------------------------------
-def select_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    logger.info("Selecting ML features")
-
-    drop_cols = {"chr", "pos", "ref", "alt", "clnsig"}
-
-    feature_cols = [
-        c for c in df.columns
-        if c not in drop_cols and c != "clnsig_label"
-    ]
-
-    # Set deterministic feature order
-    feature_cols = sorted(feature_cols)
-
-    X = df[feature_cols]
-    y = df["clnsig_label"]
-
-    logger.info(f"Selected {X.shape[1]} features")
-    return X, y
-
-
-# ------------------------------------------------------------------------------
-# Missing value handling
-# ------------------------------------------------------------------------------
-def handle_missing_values(
-    X: pd.DataFrame,
-) -> tuple[pd.DataFrame, SimpleImputer]:
-    logger.info("Handling missing values")
-
-    num_cols = X.select_dtypes(include="number").columns.tolist()
-
-    empty_cols = [c for c in num_cols if X[c].notna().sum() == 0]
-    if empty_cols:
-        logger.warning(
-            f"Dropping numeric columns with no observed values: {empty_cols}"
-        )
-        X = X.drop(columns=empty_cols)
-        num_cols = [c for c in num_cols if c not in empty_cols]
-
-    imputer = SimpleImputer(strategy="median")
-    X[num_cols] = imputer.fit_transform(X[num_cols])
-
-    return X, imputer
 
 
 # ------------------------------------------------------------------------------
@@ -169,18 +123,12 @@ def split_data(
     random_state: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """
-    Perform a stratified train / validation split.
+    Split features and labels into train and validation sets (stratified by class).
     """
     logger.info("Splitting train / validation sets")
-
     X_train, X_val, y_train, y_val = train_test_split(
-        X,
-        y,
-        test_size=test_size,
-        stratify=y,
-        random_state=random_state,
+        X, y, test_size=test_size, stratify=y, random_state=random_state
     )
-
     return X_train, X_val, y_train, y_val
 
 
@@ -188,13 +136,12 @@ def split_data(
 # Model training
 # ------------------------------------------------------------------------------
 def train_model(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    model_cfg: dict,
-    random_state: int,
+    X_train: pd.DataFrame, y_train: pd.Series, model_cfg: dict, random_state: int
 ) -> RandomForestClassifier:
+    """
+    Build and fit a RandomForest classifier; hyperparameters from config or defaults.
+    """
     logger.info("Training RandomForest model")
-
     model = RandomForestClassifier(
         n_estimators=model_cfg.get("n_estimators", 200),
         max_depth=model_cfg.get("max_depth", 12),
@@ -202,29 +149,31 @@ def train_model(
         class_weight=model_cfg.get("class_weight", "balanced"),
         random_state=random_state,
     )
-
     model.fit(X_train, y_train)
     return model
 
 
 # ------------------------------------------------------------------------------
-# Evaluating the ML model
+# Evaluate model
 # ------------------------------------------------------------------------------
 def evaluate_model(
     model: RandomForestClassifier,
     X_val: pd.DataFrame,
     y_val: pd.Series,
     outdir: Path,
-):
+    metrics_name: str = "metrics.csv",
+) -> None:
+    """
+    Compute predictions and metrics (precision/recall/F1, ROC-AUC, PR-AUC);
+    write CSV to outdir.
+    """
     logger.info("Evaluating model")
-
     y_pred = model.predict(X_val)
+    # Probability of positive class (pathogenic) for AUC
     y_prob = model.predict_proba(X_val)[:, 1]
 
     report = classification_report(y_val, y_pred, output_dict=True)
     roc_auc = roc_auc_score(y_val, y_prob)
-
-    # PR-AUC for class imbalance
     pr_auc = average_precision_score(y_val, y_prob)
 
     logger.info(f"ROC-AUC: {roc_auc:.4f}")
@@ -233,49 +182,26 @@ def evaluate_model(
     metrics_df = pd.DataFrame(report).T
     metrics_df["roc_auc"] = roc_auc
     metrics_df["pr_auc"] = pr_auc
-
-    metrics_path = outdir / "metrics.csv"
+    metrics_path = outdir / metrics_name
     metrics_df.to_csv(metrics_path)
     logger.info(f"Metrics written to {metrics_path}")
 
 
 def save_feature_importance(
-    model: RandomForestClassifier,
-    feature_names: list[str],
-    outdir: Path,
-):
+    model: RandomForestClassifier, feature_names: list[str], outdir: Path
+) -> None:
     """
-    Save feature importance scores from a trained RandomForest model.
+    Write RandomForest feature importances to feature_importance.csv, sorted descending.
     """
-
-    fi = (
-        pd.Series(
-            model.feature_importances_,
-            index=feature_names,
-        )
-        .sort_values(ascending=False)
-    )
-
-    fi_path = outdir / "feature_importance.csv"
-    fi.to_csv(fi_path, header=["importance"])
-
-    logger.info(f"Feature importance written to {fi_path}")
-
-
-def save_artifacts(
-    model: RandomForestClassifier,
-    imputer: SimpleImputer,
-    feature_names: list[str], 
-    outdir: Path,
-):
-    joblib.dump(model, outdir / "random_forest_model.joblib")
-    joblib.dump(imputer, outdir / "imputer.joblib")
-
-    # Persist feature order for inference
-    feature_order_path = outdir / "feature_order.txt"
-    feature_order_path.write_text("\n".join(feature_names))
-
-    logger.info(f"Feature order written to {feature_order_path}")
+    imp = pd.DataFrame(
+        {
+            "feature": feature_names,
+            "importance": model.feature_importances_,
+        }
+    ).sort_values("importance", ascending=False)
+    path = outdir / "feature_importance.csv"
+    imp.to_csv(path, index=False)
+    logger.info(f"Feature importance written to {path}")
 
 
 # ------------------------------------------------------------------------------
@@ -283,37 +209,44 @@ def save_artifacts(
 # ------------------------------------------------------------------------------
 def main() -> None:
     args = parse_args()
-
     config = load_config(Path(args.config)) if args.config else {}
 
+    # Training config: validation fraction and model hyperparameters
     train_cfg = config.get("train", {})
     model_cfg = train_cfg.get("model", {})
-
-    test_size = train_cfg.get("test_size", 0.2)
+    test_size = train_cfg.get("test_size", 0.2)  # fraction held out for validation
     random_state = train_cfg.get("random_state", 42)
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # Load & prepare data
+    # --- Load and prepare training data ---
     df = load_features(Path(args.features))
-
     df = filter_valid_labels(df)
-    X, y = select_features(df)
-    X, imputer = handle_missing_values(X)
+    X, y = select_features(df)  # drop IDs and raw clnsig; keep clnsig_label for y
+    X, imputer = handle_missing_values(
+        X
+    )  # fit imputer on training data (median for numerics)
 
-    X_train, X_val, y_train, y_val = split_data(
-        X, y, test_size, random_state
-    )
+    # --- Train/validation split and fit model ---
+    X_train, X_val, y_train, y_val = split_data(X, y, test_size, random_state)
+    model = train_model(X_train, y_train, model_cfg, random_state)
 
-    model = train_model(
-        X_train, y_train, model_cfg, random_state
-    )
+    # --- Validation metrics and save artifacts (used by 08_model_inference) ---
+    feature_order = X.columns.tolist()
+    evaluate_model(model, X_val, y_val, outdir, metrics_name="metrics.csv")
+    save_feature_importance(model, feature_order, outdir)
+    save_artifacts(model, imputer, feature_order, outdir)
 
-    evaluate_model(model, X_val, y_val, outdir)
-
-    save_feature_importance(model, X.columns.tolist(), outdir)
-    save_artifacts(model, imputer, X.columns.tolist(), outdir)
+    # --- Optional: evaluate on held-out test set from 06_split_clinvar ---
+    if args.test_set:
+        logger.info("Evaluating on held-out test set")
+        df_test = load_features(Path(args.test_set))
+        df_test = filter_valid_labels(df_test)
+        X_test = align_features(df_test, feature_order)  # same columns as training
+        X_test, _ = handle_missing_values(X_test, imputer=imputer)  # use fitted imputer
+        y_test = df_test["clnsig_label"]
+        evaluate_model(model, X_test, y_test, outdir, metrics_name="test_metrics.csv")
 
     logger.info("Training pipeline completed successfully")
 
