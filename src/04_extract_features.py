@@ -113,7 +113,7 @@ def parse_args() -> Args:
         output_format=args.format,
         filter_unknown=args.filter_unknown,
         config=args.config,
-    )   
+    )
     return parsed
 
 
@@ -177,7 +177,9 @@ def read_vcf(input_vcf: str) -> pd.DataFrame:
 
     desc = csq_info.get("Description", "")
     if "Format: " not in desc:
-        raise RuntimeError("CSQ Description does not contain 'Format: '; cannot parse fields")
+        raise RuntimeError(
+            "CSQ Description does not contain 'Format: '; cannot parse fields"
+        )
     csq_fields = desc.split("Format: ")[1].strip().split("|")
     records: list[dict] = []
 
@@ -214,26 +216,38 @@ def read_vcf(input_vcf: str) -> pd.DataFrame:
         # ALT can be None in some VCFs; join safely
         alt_str = ",".join(var.ALT) if var.ALT else ""
 
-        records.append({
-            "chr": var.CHROM,
-            "pos": var.POS,
-            "ref": var.REF,
-            "alt": alt_str,
-            "impact": csq.get("IMPACT", "NA"),
-            "sift": sift,
-            "polyphen": polyphen,
-            "protein_position": protein_position,
-            "distance": distance,
-            "clnsig": clnsig,
-            "clnsig_label": map_clnsig_to_label(clnsig),
-            "consequence_list": consequence_list,
-        })
+        records.append(
+            {
+                "chr": var.CHROM,
+                "pos": var.POS,
+                "ref": var.REF,
+                "alt": alt_str,
+                "impact": csq.get("IMPACT", "NA"),
+                "sift": sift,
+                "polyphen": polyphen,
+                "protein_position": protein_position,
+                "distance": distance,
+                "clnsig": clnsig,
+                "clnsig_label": map_clnsig_to_label(clnsig),
+                "consequence_list": consequence_list,
+            }
+        )
 
     if not records:
         # Empty VCF: return DataFrame with expected schema so encode_features/save_features work
         empty_columns = [
-            "chr", "pos", "ref", "alt", "impact", "sift", "polyphen",
-            "protein_position", "distance", "clnsig", "clnsig_label", "consequence_list",
+            "chr",
+            "pos",
+            "ref",
+            "alt",
+            "impact",
+            "sift",
+            "polyphen",
+            "protein_position",
+            "distance",
+            "clnsig",
+            "clnsig_label",
+            "consequence_list",
         ]
         df = pd.DataFrame(columns=empty_columns)
         logger.warning("VCF contains no variants; output will be empty")
@@ -277,9 +291,7 @@ def encode_features(df: pd.DataFrame) -> pd.DataFrame:
     logger.info("Encoding VEP consequences")
 
     # Atomic consequences (e.g. missense_variant, splice_region_variant) -> one-hot cons_*
-    df["atomic_consequences"] = df["consequence_list"].apply(
-        _split_atomic_consequences
-    )
+    df["atomic_consequences"] = df["consequence_list"].apply(_split_atomic_consequences)
 
     cons_dummies = (
         df["atomic_consequences"]
@@ -358,10 +370,8 @@ def main() -> None:
     if args.output_file:
         output_path = Path(args.output_file).with_suffix(f".{output_format}")
     else:
-        output_path = (
-            input_vcf
-            .with_suffix("")
-            .with_suffix(f".features.{output_format}")
+        output_path = input_vcf.with_suffix("").with_suffix(
+            f".features.{output_format}"
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -378,9 +388,7 @@ def main() -> None:
     if filter_unknown:
         before = len(df)
         df = df[df["clnsig_label"] != -1].reset_index(drop=True)
-        logger.info(
-            f"Filtered unknown CLNSIG: {before - len(df)} removed"
-        )
+        logger.info(f"Filtered unknown CLNSIG: {before - len(df)} removed")
 
     save_features(df, str(output_path), output_format)
 

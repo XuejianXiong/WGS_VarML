@@ -50,23 +50,17 @@ def parse_args() -> argparse.Namespace:
         description="Predict pathogenicity using a trained ClinVar ML model"
     )
 
-    parser.add_argument(
-        "features",
-        type=str,
-        help="Feature matrix (CSV or Parquet)"
-    )
+    parser.add_argument("features", type=str, help="Feature matrix (CSV or Parquet)")
 
     parser.add_argument(
-        "model_dir",
-        type=str,
-        help="Directory containing trained model artifacts"
+        "model_dir", type=str, help="Directory containing trained model artifacts"
     )
 
     parser.add_argument(
         "--outdir",
         type=str,
         default="results/predictions",
-        help="Output directory for predictions"
+        help="Output directory for predictions",
     )
 
     return parser.parse_args()

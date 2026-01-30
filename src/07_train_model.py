@@ -35,11 +35,20 @@ import pandas as pd
 from logzero import logger, setup_logger
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, roc_auc_score, average_precision_score
+from sklearn.metrics import (
+    classification_report,
+    roc_auc_score,
+    average_precision_score,
+)
 
 # Shared config utilities
 from utils.config import load_config
-from utils.ml_utils import select_features, handle_missing_values, save_artifacts, align_features
+from utils.ml_utils import (
+    select_features,
+    handle_missing_values,
+    save_artifacts,
+    align_features,
+)
 
 # ------------------------------------------------------------------------------
 # Logging
@@ -58,11 +67,20 @@ def parse_args() -> argparse.Namespace:
         description="Train ML model on ClinVar VEP features"
     )
     # Positional: path to training split (from 06_split_clinvar)
-    parser.add_argument("features", type=str, help="Training feature CSV/Parquet (e.g. clinvar.vep.features.train.parquet)")
+    parser.add_argument(
+        "features",
+        type=str,
+        help="Training feature CSV/Parquet (e.g. clinvar.vep.features.train.parquet)",
+    )
     parser.add_argument("--outdir", type=str, default="results/models")
     parser.add_argument("--config", type=str, default=None, help="Optional YAML config")
     # If provided, run final evaluation on this held-out set and write test_metrics.csv
-    parser.add_argument("--test-set", type=str, default=None, help="Optional held-out test set for final evaluation (e.g. clinvar.vep.features.test.parquet)")
+    parser.add_argument(
+        "--test-set",
+        type=str,
+        default=None,
+        help="Optional held-out test set for final evaluation (e.g. clinvar.vep.features.test.parquet)",
+    )
     return parser.parse_args()
 
 
@@ -117,7 +135,9 @@ def split_data(
 # ------------------------------------------------------------------------------
 # Model training
 # ------------------------------------------------------------------------------
-def train_model(X_train: pd.DataFrame, y_train: pd.Series, model_cfg: dict, random_state: int) -> RandomForestClassifier:
+def train_model(
+    X_train: pd.DataFrame, y_train: pd.Series, model_cfg: dict, random_state: int
+) -> RandomForestClassifier:
     """
     Build and fit a RandomForest classifier; hyperparameters from config or defaults.
     """
@@ -136,9 +156,15 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series, model_cfg: dict, rand
 # ------------------------------------------------------------------------------
 # Evaluate model
 # ------------------------------------------------------------------------------
-def evaluate_model(model: RandomForestClassifier, X_val: pd.DataFrame, y_val: pd.Series, outdir: Path, metrics_name: str = "metrics.csv") -> None:
+def evaluate_model(
+    model: RandomForestClassifier,
+    X_val: pd.DataFrame,
+    y_val: pd.Series,
+    outdir: Path,
+    metrics_name: str = "metrics.csv",
+) -> None:
     """
-    Compute predictions and metrics (precision/recall/F1, ROC-AUC, PR-AUC); 
+    Compute predictions and metrics (precision/recall/F1, ROC-AUC, PR-AUC);
     write CSV to outdir.
     """
     logger.info("Evaluating model")
@@ -161,14 +187,18 @@ def evaluate_model(model: RandomForestClassifier, X_val: pd.DataFrame, y_val: pd
     logger.info(f"Metrics written to {metrics_path}")
 
 
-def save_feature_importance(model: RandomForestClassifier, feature_names: list[str], outdir: Path) -> None:
+def save_feature_importance(
+    model: RandomForestClassifier, feature_names: list[str], outdir: Path
+) -> None:
     """
     Write RandomForest feature importances to feature_importance.csv, sorted descending.
     """
-    imp = pd.DataFrame({
-        "feature": feature_names,
-        "importance": model.feature_importances_,
-    }).sort_values("importance", ascending=False)
+    imp = pd.DataFrame(
+        {
+            "feature": feature_names,
+            "importance": model.feature_importances_,
+        }
+    ).sort_values("importance", ascending=False)
     path = outdir / "feature_importance.csv"
     imp.to_csv(path, index=False)
     logger.info(f"Feature importance written to {path}")
@@ -184,7 +214,7 @@ def main() -> None:
     # Training config: validation fraction and model hyperparameters
     train_cfg = config.get("train", {})
     model_cfg = train_cfg.get("model", {})
-    test_size = train_cfg.get("test_size", 0.2)   # fraction held out for validation
+    test_size = train_cfg.get("test_size", 0.2)  # fraction held out for validation
     random_state = train_cfg.get("random_state", 42)
 
     outdir = Path(args.outdir)
@@ -193,8 +223,10 @@ def main() -> None:
     # --- Load and prepare training data ---
     df = load_features(Path(args.features))
     df = filter_valid_labels(df)
-    X, y = select_features(df)           # drop IDs and raw clnsig; keep clnsig_label for y
-    X, imputer = handle_missing_values(X)  # fit imputer on training data (median for numerics)
+    X, y = select_features(df)  # drop IDs and raw clnsig; keep clnsig_label for y
+    X, imputer = handle_missing_values(
+        X
+    )  # fit imputer on training data (median for numerics)
 
     # --- Train/validation split and fit model ---
     X_train, X_val, y_train, y_val = split_data(X, y, test_size, random_state)

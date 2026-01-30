@@ -41,6 +41,7 @@ from utils.config import load_config, resolve
 # Argument parsing
 # ------------------------------------------------------------------------------
 
+
 def parse_args() -> argparse.Namespace:
     """
     Parse CLI: input feature file, output directory, config path for split fractions.
@@ -52,19 +53,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input",
         required=True,
-        help="ClinVar VEP feature matrix: clinvar.vep.features.csv or .parquet"
+        help="ClinVar VEP feature matrix: clinvar.vep.features.csv or .parquet",
     )
 
     parser.add_argument(
         "--outdir",
         default="data/splits",
-        help="Output directory for train/test/infer files"
+        help="Output directory for train/test/infer files",
     )
 
     parser.add_argument(
         "--config",
         default="config/config.yaml",
-        help="Path to YAML config with split.train_frac, split.test_frac, split.infer_frac"
+        help="Path to YAML config with split.train_frac, split.test_frac, split.infer_frac",
     )
 
     return parser.parse_args()
@@ -73,6 +74,7 @@ def parse_args() -> argparse.Namespace:
 # ------------------------------------------------------------------------------
 # Utilities
 # ------------------------------------------------------------------------------
+
 
 def stable_hash(value: str) -> float:
     """
@@ -130,6 +132,7 @@ def write_df(df: pd.DataFrame, out_dir: Path, base_name: str, split: str, suffix
 # Configuration helpers
 # ------------------------------------------------------------------------------
 
+
 def load_and_resolve_split_config(config_path: str) -> tuple[float, float, float]:
     """
     Load train/test/infer fractions from config (under 'split' section).
@@ -144,9 +147,7 @@ def load_and_resolve_split_config(config_path: str) -> tuple[float, float, float
     infer_frac = resolve(None, split_cfg.get("infer_frac"), 0.15)
 
     if abs(train_frac + test_frac + infer_frac - 1.0) > 1e-6:
-        raise ValueError(
-            "train_frac + test_frac + infer_frac must sum to 1.0"
-        )
+        raise ValueError("train_frac + test_frac + infer_frac must sum to 1.0")
 
     logger.info(
         f"Using split fractions: "
@@ -159,6 +160,7 @@ def load_and_resolve_split_config(config_path: str) -> tuple[float, float, float
 # ------------------------------------------------------------------------------
 # Validation
 # ------------------------------------------------------------------------------
+
 
 def validate_input_schema(df: pd.DataFrame):
     """
@@ -176,6 +178,7 @@ def validate_input_schema(df: pd.DataFrame):
 # Split logic
 # ------------------------------------------------------------------------------
 
+
 def assign_variant_splits(
     df: pd.DataFrame,
     train_frac: float,
@@ -188,21 +191,24 @@ def assign_variant_splits(
     """
     # Build stable variant key for hashing (used by 07_train_model / 08_model_inference for identity)
     variant_keys = (
-        df["chr"].astype(str) + ":" +
-        df["pos"].astype(str) + ":" +
-        df["ref"].astype(str) + ":" +
-        df["alt"].astype(str)
+        df["chr"].astype(str)
+        + ":"
+        + df["pos"].astype(str)
+        + ":"
+        + df["ref"].astype(str)
+        + ":"
+        + df["alt"].astype(str)
     )
 
-    splits = variant_keys.map(
-        lambda key: assign_split(key, train_frac, test_frac)
-    )
+    splits = variant_keys.map(lambda key: assign_split(key, train_frac, test_frac))
 
     return splits
+
 
 # ------------------------------------------------------------------------------
 # Output materialization
 # ------------------------------------------------------------------------------
+
 
 def materialize_splits(
     df: pd.DataFrame,
@@ -238,14 +244,13 @@ def materialize_splits(
 # Main
 # ------------------------------------------------------------------------------
 
+
 def main() -> None:
     setup_logger()
     args = parse_args()
 
     # --- Load split fractions from config (must sum to 1.0) ---
-    train_frac, test_frac, infer_frac = load_and_resolve_split_config(
-        args.config
-    )
+    train_frac, test_frac, infer_frac = load_and_resolve_split_config(args.config)
 
     input_path = Path(args.input)
     output_dir = Path(args.outdir)

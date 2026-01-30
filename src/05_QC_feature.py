@@ -111,11 +111,11 @@ def html_table(df: pd.DataFrame, max_rows: int = 20) -> str:
     """
     Render a compact HTML table from a DataFrame (head only).
     """
-    table_html = (
-        df.head(max_rows)
-        .to_html(border=0, classes="table", index=True, escape=False)
+    table_html = df.head(max_rows).to_html(
+        border=0, classes="table", index=True, escape=False
     )
     return table_html
+
 
 # ------------------------------------------------------------------------------
 # Plotting helpers
@@ -271,9 +271,7 @@ def consequence_section(df: pd.DataFrame, n_cons: int) -> str:
     if not cons_cols:
         return ""
 
-    counts = (
-        df[cons_cols].sum().sort_values(ascending=False).head(n_cons)
-    )
+    counts = df[cons_cols].sum().sort_values(ascending=False).head(n_cons)
     fig, ax = plt.subplots(figsize=(5, 4))
     colors = cm.viridis(np.linspace(0.2, 0.8, len(counts)))
     counts.plot(kind="barh", ax=ax, edgecolor="black", color=colors)
