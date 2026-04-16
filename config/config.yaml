@@ -1,6 +1,28 @@
+# ==============================================================================
+# WGS_VarML Pipeline Configuration (ClinVar 2026)
+# ==============================================================================
+# This file governs the scientific logic and hyperparameters of the 
+# pathogenicity prediction pipeline.
+# ==============================================================================
+
+project:
+  name: "WGS_VarML_ClinVar_2026"
+  version: "1.0.0"
+  random_seed: 42
+
 extract:
-  format: parquet         # output format csv/parquet, default is csv
-  filter_unknown: true    # filter out unknown CLNSIG, default is False
+  format: "parquet"         # Use 'parquet' for large genomic datasets (compression/speed)
+  filter_unknown: true      # Remove variants where clnsig_label is -1 (uncertain/VUS)
+  
+  # Define which raw VEP fields to extract. Centralizing this here allows
+  # the Python script to be dynamic.
+  target_fields:
+    - SIFT
+    - PolyPhen
+    - DISTANCE
+    - SYMBOL                # Gene Symbol for gene-aware splitting
+    - IMPACT
+    - Consequence
 
 qc:
   numeric_cols:
@@ -8,29 +30,44 @@ qc:
     - polyphen
     - protein_position
     - distance
-
-  #distance_clip_pct: 0.99
-  #distance_clip_note: "Histogram clipped at 99th percentile for visualization; underlying distances unchanged."
-  distance_clip_pct: None
-  distance_clip_note: ""
-
+  
+  # Visualization parameters
+  distance_clip_pct: 0.99   # Clip extreme outliers in histograms
+  distance_clip_note: "Clipped at 99th percentile for visualization only."
   top_consequences: 15
   random_samples: 10
-
+  output_report_name: "feature_qc_report.html"
 
 split:
+  # Ratios must sum to 1.0
   train_frac: 0.70
   test_frac: 0.15
   infer_frac: 0.15
   
+  # Prevention of Data Leakage (Critical for Bioinformatics)
+  # Options: 'variant' (random), 'gene' (gene-aware), 'chr' (chromosomal holdout)
+  group_by: "gene"          
 
 train:
-  test_size: 0.2
-  random_state: 42
+  # Validation set taken from the Training split
+  validation_size: 0.2
+  
+  # Feature Engineering & Imputation
+  preprocessing:
+    imputation_strategy: "median"  # Handling NaNs in SIFT/PolyPhen
+    add_missing_indicator: true    # Model learns if a feature was non-existent (e.g., non-coding)
+    scaling: "standard"            # Scale distances and positions
 
   model:
-    type: random_forest
-    n_estimators: 200         # Number of trees in the forest.
-    max_depth: 12             # Maximum depth of each decision tree.
-    class_weight: balanced    # Adjusts weights inversely proportional to class frequencies.
-    n_jobs: -1                # Number of CPU cores to use for training, and -1 means use all available cores
+    type: "random_forest"
+    n_estimators: 500         # Increased for better stability on 1.7M variants
+    max_depth: 15             # Sufficient depth for complex genomic interactions
+    min_samples_leaf: 5       # Prevents overfitting on rare variant artifacts
+    class_weight: "balanced"  # Handles Pathogenic/Benign imbalance automatically
+    n_jobs: -1                # Utilize all available CPU cores
+    verbose: 1
+
+inference:
+  batch_size: 10000           # Variants processed per chunk to manage memory
+  output_prefix: "pathogenicity_predictions"
+  probability_threshold: 0.5   # Threshold for binary Pathogenic classification
