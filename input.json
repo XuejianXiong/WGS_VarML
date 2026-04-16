@@ -1,0 +1,10 @@
+{
+    "project_name": "WGS_VarML_ClinVar_2026",
+    "input_vcf": "data/raw/clinvar.vcf.gz",
+    "ref_fasta": "data/reference/GRCh38.fa.gz",
+    "vep_cache": "DEFAULT",
+    "outdir": "results",
+    "vep_threads": 8,
+    "vep_assembly": "GRCh38",
+    "publish_dir_mode": "copy"
+}
