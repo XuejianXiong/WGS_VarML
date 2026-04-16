@@ -100,8 +100,11 @@ fi
 # 5. Reference Assembly (GRCh38)
 log "Retrieving Ensembl GRCh38 Primary Assembly..."
 ENSEMBL_BASE="https://ftp.ensembl.org/pub/release-111/fasta/homo_sapiens/dna"
-REF_FASTA="Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz"
+# Canonical source name
+ENSEMBL_FILE="Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz"
+# Clean local alias
+REF_FASTA="GRCh38.fa.gz"
 
-download_file "${ENSEMBL_BASE}/${REF_FASTA}" "data/reference/${REF_FASTA}"
+download_file "${ENSEMBL_BASE}/${ENSEMBL_FILE}" "data/reference/${REF_FASTA}"
 
 log "${BOLD}Data acquisition complete. Pipeline ready for Pre-processing.${NC}"
