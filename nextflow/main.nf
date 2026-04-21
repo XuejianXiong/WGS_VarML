@@ -4,7 +4,6 @@
 ========================================================================================
     WGS_VarML Pipeline
 ========================================================================================
-    Author: Xuejian
     Description: 
         A production-grade Nextflow DSL2 pipeline for WGS variant preprocessing, 
         VEP annotation, and ML feature extraction.
@@ -26,6 +25,7 @@ nextflow.enable.dsl=2
 include { PREPROCESS_VCF    } from './preprocess.nf'
 include { RUN_VEP           } from './annotation.nf' 
 include { FEATURE_EXTRACTION } from './feature.nf'
+include { QC_FEATURES        } from './qc_feature.nf'
 
 workflow {
     
@@ -67,6 +67,11 @@ workflow {
     // Currently configured to run in isolation using 'ch_vep_vcf' from input.json
     // FEATURE_EXTRACTION(RUN_VEP.out.vep_vcf, ch_config)
     FEATURE_EXTRACTION(ch_vep_vcf, ch_config)
+
+    // Step 4: Feature QC
+    // Reference the exact emit name 'feature_matrix' from your feature.nf
+    QC_FEATURES(FEATURE_EXTRACTION.out.feature_matrix, ch_config)
+
 }
 
 // --- Completion Notification ---

@@ -25,7 +25,7 @@ Usage
 
 Example
 -------
-    python3 src/05_QC_feature.py data/processed/clinvar.vep.features.csv --output results/qc_report.html --config config/config.yaml
+    python3 src/05_QC_feature.py data/processed/clinvar.features.parquet --output results/qc_report.html --config config/config.yaml
 """
 
 from __future__ import annotations

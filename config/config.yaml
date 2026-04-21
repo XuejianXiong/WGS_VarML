@@ -38,6 +38,13 @@ qc:
   random_samples: 10
   output_report_name: "feature_qc_report.html"
 
+validation:
+  min_variants: 1000
+  required_columns:
+    - clnsig_label
+    - gene_symbol
+  allowed_chromosomes: ["1-22", "X", "Y", "MT"]
+  
 split:
   # Ratios must sum to 1.0
   train_frac: 0.70
