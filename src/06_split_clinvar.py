@@ -1,18 +1,38 @@
 #!/usr/bin/env python3
 """
+06_split_clinvar.py
+
 Deterministic Data Splitter for Genomic Feature Matrices.
+Used after 05_QC_feature and before 07_train_model to partition variant data 
+into training, testing, and inference sets while ensuring biological data integrity.
 
-This module partitions variant data into training, testing, and inference sets.
-Unlike standard random splits, this script uses deterministic hashing to ensure:
-1. Stability: Re-running the script on the same data yields the same splits.
-2. Leakage Prevention: Variants are grouped so that all mutations for a specific
-   entity (e.g., a Gene or Chromosome) stay within the same partition.
+Processing Steps (in order)
+---------------------------
+1. Load configuration from YAML and resolve CLI overrides.
+2. Filter variants by quality or significance thresholds defined in config.
+3. Apply deterministic hashing (using variant/gene IDs) to ensure split stability.
+4. Group variants to prevent data leakage (e.g., keeping all variants of the same 
+   gene in the same partition).
+5. Generate balanced splits for train, test, and inference sets.
+6. Serialize partitions to Parquet for high-performance model ingestion.
 
-Outputs:
-    - {base}.train.parquet: Used for model fitting.
-    - {base}.test.parquet: Used for unbiased performance evaluation.
-    - {base}.infer.parquet: Features only, used for simulated production runs.
-    - {base}.infer_with_labels.parquet: Audit file for inference validation.
+Config (config.yaml under "split"): train_size, test_size, infer_size, 
+group_by_col, random_seed, stratify_label. Precedence: CLI > YAML > defaults.
+
+Outputs
+-------
+1. {base}.train.parquet: Used for model fitting.
+2. {base}.test.parquet: Used for unbiased performance evaluation.
+3. {base}.infer.parquet: Features only, used for simulated production runs.
+4. {base}.infer_with_labels.parquet: Audit file for inference validation.
+
+Usage
+-----
+    python3 src/06_split_clinvar.py <features_parquet> [--outdir DIR] [--group-by STR]
+
+Example
+-------
+    python3 src/06_split_clinvar.py data/processed/clinvar.features.parquet --group-by chr
 """
 
 from __future__ import annotations

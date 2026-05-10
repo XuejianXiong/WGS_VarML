@@ -2,34 +2,45 @@
 ========================================================================================
     MODULE: QC_FEATURES
 ========================================================================================
-    Description: 
-        Performs post-extraction Quality Control on ML feature matrices. 
-        Generates an interactive HTML report to validate feature distributions, 
-        missingness, and class balance prior to model training.
+    @Domain      : Data Quality Assurance & Exploratory Data Analysis (EDA)
+    @Description : 
+        Generates an automated, self-contained quality control report for the 
+        extracted feature matrix. This module identifies data drift, missingness, 
+        and feature cardinality issues that could negatively impact ML model 
+        convergence or lead to biased predictions.
 
-    Operational Design:
-        - Decoupled from extraction to allow independent re-runs of visualization.
-        - Utilizes Median Absolute Deviation (MAD) principles for signal validation.
-        - Supports Parquet/CSV input formats.
+    Operational Design & Auditing:
+        1. Distribution Analysis: Visualizes feature scaling and identifies outliers 
+           in continuous variables (e.g., CADD scores, allele frequencies).
+        2. Label Integrity: Audits the distribution of 'clnsig_label' to detect 
+           class imbalance—a critical factor for genomic pathogenicity models.
+        3. Encapsulated Reporting: Produces a standalone HTML artifact using base64 
+           plot embedding, ensuring reports remain portable and viewable without 
+           external dependencies or web servers.
+
+    Resources:
+        - Profiles: 'process_low' (Optimized for single-thread CPU execution)
+        - Latency : ~2-5 minutes; designed for rapid feedback loops.
 
     Inputs:
-        - path feature_parquet : ML-ready feature table (e.g., .features.parquet).
-        - path config          : YAML configuration containing 'qc' logic/thresholds.
+        - feature_parquet : [path] The vectorized feature matrix (Step 3 output).
+        - config          : [path] Centralized YAML containing QC thresholds and 
+                            feature group definitions.
 
     Outputs:
-        - path "*_report.html" : Standalone HTML QC report with embedded base64 plots.
+        - qc_report : [path] Comprehensive HTML report for stakeholder review.
+
+    Compliance & Traceability:
+        - Reports are published to '${params.outdir}' for permanent archival.
+        - Provides a "human-in-the-loop" validation step before data splitting.
 ========================================================================================
 */
 
 process QC_FEATURES {
-    // tag: Displays the current sample/file in the Nextflow console and log files
-    tag "${feature_parquet.baseName}"
-    
-    // label: Assigns resource requirements (CPU/Mem) defined in nextflow.config
+    tag "QC: ${feature_parquet.baseName}"
     label 'process_low'
 
-    // publishDir: Routes final artifacts to the results/qc directory
-    // 'copy' mode ensures data persists after work/ directory cleanup
+    // Routes diagnostic artifacts to the reporting directory
     publishDir "${params.outdir}", mode: params.publish_dir_mode
 
     input:
@@ -42,9 +53,9 @@ process QC_FEATURES {
     script:
     /*
     Execution Logic:
-    1. Extracts the base name to ensure output consistency.
-    2. Invokes the Python QC engine with the centralized config.yaml.
-    3. Python script handles base64 encoding of plots for a self-contained HTML.
+    1. BaseName Extraction: Maintains a consistent naming lineage from VCF to Report.
+    2. Decoupled Logic: The Python engine (src/05_QC_feature.py) is kept separate 
+       from the workflow logic to allow for independent testing of the QC suite.
     */
     def report_name = "${feature_parquet.baseName}_report.html"
 

@@ -21,7 +21,7 @@ distance_clip_pct, distance_clip_note. Precedence: CLI > YAML > defaults.
 
 Usage
 -----
-    python3 src/05_QC_feature.py <features_csv_or_parquet> [--output REPORT.html] [--config CONFIG]
+    python3 src/05_QC_feature.py <features_csv_or_parquet> [--output REPORT.html] <--config CONFIG>
 
 Example
 -------

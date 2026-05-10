@@ -2,12 +2,26 @@
     "project_name": "WGS_VarML_ClinVar_2026",
     "input_vcf": "data/raw/clinvar.vcf.gz",
     "ref_fasta": "data/reference/GRCh38.fa.gz",
+    "vep_output_name": "clinvar.vep.vcf.gz",
     "vep_vcf_input": "data/processed/clinvar.vep.vcf.gz",
+    "ch_train_file": "data/splits/clinvar.train.parquet",
+    "ch_test_file": "data/splits/clinvar.test.parquet",
+    "ch_infer_file": "data/splits/clinvar.infer.parquet",
+    "split_group_by": "chr",
     "config_yaml": "config/config.yaml",
-    "vep_threads": 8,
+    "vep_threads": 6,
     "vep_assembly": "GRCh38",
     "vep_cache": "DEFAULT",
-    "datadir": "data/processed",
+    "datadir": "data",
     "outdir": "results",
-    "publish_dir_mode": "copy"
+    "publish_dir_mode": "copy",
+    "model_list": ["rf", "xgb", "lgbm", "lr"],
+    "train": {
+        "val_split": 0.2,
+        "random_state": 42,
+        "model": {
+            "n_estimators": 500,
+            "max_depth": 12
+        }
+    }
 }

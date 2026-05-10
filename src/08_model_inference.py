@@ -2,149 +2,173 @@
 """
 08_model_inference.py
 
-Run inference using a trained ML model for ClinVar pathogenicity prediction.
+Genomic ML Inference Engine for Variant Pathogenicity Prediction.
+Used after 07_train_model to generate pathogenicity scores for unobserved 
+variants using serialized artifacts (model, imputer, feature order).
 
-Pipeline
---------
-1. Load trained model artifacts (model, imputer, feature order)
-2. Load feature matrix
-3. Align features to training feature order
-4. Impute missing values using trained imputer
-5. Generate predictions (labels + probabilities)
-6. Save predictions to disk
+Workflow (in order)
+-------------------
+1. Artifact Loading: Retrieves model.joblib, imputer.joblib, and feature_order.txt.
+2. Feature Alignment: Reindexes input data to match the exact training schema.
+3. Imputation: Applies the fitted imputer state to resolve missing genomic values.
+4. Prediction: Generates pathogenicity probabilities and binary classifications.
+5. Export: Saves results to a model-specific CSV (e.g., xgb_predictions.csv).
+
+Config (config.yaml under "inference")
+--------------------------------------
+Supports CLI overrides for output directory and model naming prefixes. 
+Ensures zero-skew between training and production environments.
 
 Usage
 -----
-    python3 src/08_model_inference.py <features_csv_or_parquet> <model_dir> --outdir <outdir>
+    python3 src/08_model_inference.py <features.parquet> <model_dir> [--outdir DIR]
 
 Example
 -------
-    python3 src/08_model_inference.py data/splits/clinvar.vep.features.infer.parquet results/models --outdir results/predictions
+    python3 src/08_model_inference.py data/splits/clinvar.infer.parquet results/models/xgb/ --outdir results/
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+from typing import Tuple, Any
 
 import pandas as pd
 from logzero import logger, setup_logger
 
-from utils.ml_utils import (
-    load_artifacts,
-    align_features,
-    handle_missing_values,
-)
-
-# ------------------------------------------------------------------------------
-# Logging
-# ------------------------------------------------------------------------------
-setup_logger()
-
-
-# ------------------------------------------------------------------------------
-# Argument parsing
-# ------------------------------------------------------------------------------
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Predict pathogenicity using a trained ClinVar ML model"
+# Project Utilities
+try:
+    from utils.ml_utils import (
+        load_artifacts,
+        align_features,
+        handle_missing_values,
     )
+except ImportError as e:
+    logger.error(f"Critical Error: Missing project utilities in 'utils/ml_utils.py': {e}")
+    sys.exit(1)
 
-    parser.add_argument("features", type=str, help="Feature matrix (CSV or Parquet)")
+# Initialize production logging
+setup_logger(name="Inference", level=20)
+
+
+def parse_args() -> argparse.Namespace:
+    """
+    Parses and validates command-line arguments.
+    """
+    parser = argparse.ArgumentParser(
+        description="WGS_VarML Pathogenicity Inference Engine",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
 
     parser.add_argument(
-        "model_dir", type=str, help="Directory containing trained model artifacts"
+        "features", 
+        type=str, 
+        help="Input feature matrix (CSV or Parquet format)"
     )
-
+    parser.add_argument(
+        "model_dir", 
+        type=str, 
+        help="Directory containing model.joblib, imputer.joblib, etc."
+    )
     parser.add_argument(
         "--outdir",
         type=str,
-        default="results/predictions",
-        help="Output directory for predictions",
+        default="results",
+        help="Directory to save the prediction CSV"
+    )
+    parser.add_argument(
+        "--id-cols",
+        nargs="+",
+        default=["chr", "pos", "ref", "alt"],
+        help="Columns to preserve for variant identification"
     )
 
     return parser.parse_args()
 
 
-# ------------------------------------------------------------------------------
-# Data loading
-# ------------------------------------------------------------------------------
-def load_features(path: Path) -> pd.DataFrame:
-    logger.info(f"Loading feature matrix: {path}")
+def load_dataset(path: Path) -> pd.DataFrame:
+    """
+    Loads data from disk, supporting Parquet and CSV formats.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Input file not found: {path}")
 
-    suffix = path.suffix.lower()
-    if suffix == ".csv":
-        df = pd.read_csv(path, low_memory=False)
-    elif suffix == ".parquet":
-        df = pd.read_parquet(path)
-    else:
-        raise ValueError(f"Unsupported feature format: {suffix}")
-
-    logger.info(f"Feature matrix shape: {df.shape}")
-    return df
+    logger.info(f"Reading input features: {path.name}")
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path, low_memory=False)
 
 
-# ------------------------------------------------------------------------------
-# Prediction
-# ------------------------------------------------------------------------------
-def run_prediction(
+def run_pipeline(
     df: pd.DataFrame,
-    model,
-    imputer,
+    model: Any,
+    imputer: Any,
     feature_order: list[str],
+    id_cols: list[str]
 ) -> pd.DataFrame:
     """
-    Align features, impute missing values, and generate predictions.
+    Executes the inference logic: Align -> Impute -> Predict.
     """
-    logger.info("Preparing features for inference")
-
+    # 1. Align features to training order (Crucial for correct math)
     X = align_features(df, feature_order)
-    X, _ = handle_missing_values(X, imputer=imputer)
+    
+    # 2. Handle missing values using the fitted training imputer
+    X_clean, _ = handle_missing_values(X, imputer=imputer)
 
-    logger.info("Running model inference")
-    y_prob = model.predict_proba(X)[:, 1]
-    y_pred = model.predict(X)
+    # 3. Generate Scores
+    logger.info("Generating model predictions...")
+    probs = model.predict_proba(X_clean)[:, 1]
+    labels = model.predict(X_clean)
 
-    result_df = df.copy()
-    result_df["pred_label"] = y_pred
-    result_df["pred_prob"] = y_prob
+    # 4. Consolidate results with variant IDs
+    existing_ids = [c for c in id_cols if c in df.columns]
+    results = df[existing_ids].copy()
+    results["pathogenicity_score"] = probs
+    results["predicted_label"] = labels
 
-    return result_df
+    return results
 
 
-# ------------------------------------------------------------------------------
-# Main
-# ------------------------------------------------------------------------------
 def main() -> None:
+    """
+    Main execution block for the inference pipeline.
+    """
     args = parse_args()
-
-    features_path = Path(args.features)
-    model_dir = Path(args.model_dir)
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # Load inputs
-    df = load_features(features_path)
-    model, imputer, feature_order = load_artifacts(model_dir)
+    try:
+        # 1. Load trained artifacts from the specified subfolder
+        # Note: Since you use 'model.joblib', this points to model_dir/model.joblib
+        logger.info(f"Loading artifacts from: {args.model_dir}")
+        model, imputer, feature_order = load_artifacts(Path(args.model_dir))
 
-    # Predict
-    predictions = run_prediction(
-        df=df,
-        model=model,
-        imputer=imputer,
-        feature_order=feature_order,
-    )
+        # 2. Load feature data
+        df = load_dataset(Path(args.features))
 
-    # Save results
-    out_path = outdir / "predictions.csv"
-    predictions.to_csv(out_path, index=False)
-    logger.info(f"Predictions written to {out_path}")
+        # 3. Process
+        output_df = run_pipeline(
+            df=df,
+            model=model,
+            imputer=imputer,
+            feature_order=feature_order,
+            id_cols=args.id_cols
+        )
 
-    logger.info("Prediction pipeline completed successfully")
+        # 4. Save results (using the model subfolder name for the filename)
+        model_name = Path(args.model_dir).name
+        output_path = outdir / f"{model_name}_predictions.csv"
+        output_df.to_csv(output_path, index=False)
+        
+        logger.info(f"Inference complete. {len(output_df)} variants scored.")
+        logger.info(f"Predictions saved to: {output_path}")
+
+    except Exception as e:
+        logger.error(f"Inference Pipeline Failed: {e}")
+        sys.exit(1)
 
 
-# ------------------------------------------------------------------------------
-# Entry point
-# ------------------------------------------------------------------------------
 if __name__ == "__main__":
     main()

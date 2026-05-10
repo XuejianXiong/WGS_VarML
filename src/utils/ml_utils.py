@@ -19,7 +19,26 @@ from logzero import logger
 # -----------------------------
 # Feature selection
 # -----------------------------
-def select_features(df: pd.DataFrame, drop_cols=None) -> tuple[pd.DataFrame, pd.Series]:
+def select_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+    # Technical drops only
+    technical_drops = {"chr", "pos", "ref", "alt", "clnsig"}
+    
+    # Target only the "Circular" VEP impact ratings
+    circular_drops = {c for c in df.columns if "impact_" in c}
+    
+    # We KEEP "cons_" (consequences) because they represent raw biology
+    effective_drops = technical_drops | circular_drops
+
+    feature_cols = [c for c in df.columns if c not in effective_drops and c != "clnsig_label"]
+    feature_cols = sorted(feature_cols)
+
+    X = df[feature_cols]
+    y = df["clnsig_label"] if "clnsig_label" in df.columns else None
+
+    logger.info(f"Training with {X.shape[1]} features (including consequences and scores)")
+    return X, y
+
+def select_features_v1(df: pd.DataFrame, drop_cols=None) -> tuple[pd.DataFrame, pd.Series]:
     drop_cols = drop_cols or {"chr", "pos", "ref", "alt", "clnsig"}
 
     feature_cols = [c for c in df.columns if c not in drop_cols and c != "clnsig_label"]
@@ -29,6 +48,32 @@ def select_features(df: pd.DataFrame, drop_cols=None) -> tuple[pd.DataFrame, pd.
     y = df["clnsig_label"] if "clnsig_label" in df.columns else None
 
     logger.info(f"Selected {X.shape[1]} features")
+    return X, y
+
+
+def select_features_v2(df: pd.DataFrame, drop_cols=None) -> tuple[pd.DataFrame, pd.Series]:
+    """
+    Refined feature selection. 
+    To force models to learn from nuanced scores (SIFT, etc.), 
+    we add impact/consequence categories to the drop list.
+    """
+    # 1. Base technical drops
+    base_drops = {"chr", "pos", "ref", "alt", "clnsig"}
+    
+    # 2. Add "Obvious" features to the drop list for the experiment
+    # These are the columns currently dominating your 0.94 ROC-AUC
+    obvious_drops = {c for c in df.columns if "impact_" in c or "cons_" in c}
+    
+    # Combine lists
+    effective_drops = (drop_cols or base_drops) | obvious_drops
+
+    feature_cols = [c for c in df.columns if c not in effective_drops and c != "clnsig_label"]
+    feature_cols = sorted(feature_cols)
+
+    X = df[feature_cols]
+    y = df["clnsig_label"] if "clnsig_label" in df.columns else None
+
+    logger.info(f"Selected {X.shape[1]} features (Dropped {len(obvious_drops)} impact/cons features)")
     return X, y
 
 
@@ -71,7 +116,7 @@ def align_features(df: pd.DataFrame, feature_order: list[str], fill_value=0) -> 
 # Model artifact loading/saving
 # -----------------------------
 def load_artifacts(model_dir: Path):
-    model = joblib.load(model_dir / "random_forest_model.joblib")
+    model = joblib.load(model_dir / "model.joblib")
     imputer = joblib.load(model_dir / "imputer.joblib")
     feature_order_path = model_dir / "feature_order.txt"
     with open(feature_order_path) as f:
@@ -81,6 +126,6 @@ def load_artifacts(model_dir: Path):
 
 def save_artifacts(model, imputer, feature_names, outdir: Path):
     import joblib
-    joblib.dump(model, outdir / "random_forest_model.joblib")
+    joblib.dump(model, outdir / "model.joblib")
     joblib.dump(imputer, outdir / "imputer.joblib")
     (outdir / "feature_order.txt").write_text("\n".join(feature_names))

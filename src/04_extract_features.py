@@ -1,18 +1,31 @@
 #!/usr/bin/env python3
 """
-Feature Extraction for WGS Variant Pathogenicity Prediction.
+04_extract_features.py
 
-This script transforms raw VEP-annotated VCF files into ML-ready feature matrices.
-It addresses the parsing of complex VEP strings (e.g., 'deleterious(0.01)')
-and handles large-scale genomic data using memory-efficient Pandas dtypes.
+Transform raw VEP-annotated VCF files into ML-ready feature matrices.
+Used after 03_annotate_vep and before 05_QC_feature to parse complex genomic
+annotations into structured numeric and categorical vectors.
 
-Pipeline:
-    1. Load configuration from YAML and resolve CLI overrides.
-    2. Stream VCF records and parse the INFO/CSQ (Consequence) field.
-    3. Extract numeric scores (SIFT/PolyPhen) using robust regular expressions.
-    4. Map ClinVar significance to binary labels (0: Benign, 1: Pathogenic).
-    5. Vectorize categorical data (Consequence, Impact) via One-Hot Encoding.
-    6. Serialize to Parquet with Snappy compression for high-performance I/O.
+Processing Steps (in order)
+---------------------------
+1. Load configuration from YAML and resolve CLI overrides.
+2. Stream VCF records and parse the INFO/CSQ (Consequence) field.
+3. Extract numeric scores (SIFT/PolyPhen) using robust regular expressions.
+4. Map ClinVar significance to binary labels (0: Benign, 1: Pathogenic).
+5. Vectorize categorical data (Consequence, Impact) via One-Hot Encoding.
+6. Serialize to Parquet with Snappy compression for high-performance downstream I/O.
+
+Config (config.yaml under "features"): sift_regex, polyphen_regex, 
+target_mapping, impact_categories, consequence_categories. 
+Precedence: CLI > YAML > defaults.
+
+Usage
+-----
+    python3 src/04_extract_features.py <input_vcf> [--output FEATURES.parquet] <--config CONFIG>
+
+Example
+-------
+    python3 src/04_extract_features.py data/processed/clinvar.vep.vcf.gz --config config/config.yaml
 """
 
 from __future__ import annotations
