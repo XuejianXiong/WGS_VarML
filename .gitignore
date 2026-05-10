@@ -7,16 +7,9 @@
 data/**
 results/**
 !results/*.html
-!results/models
-!results/pipeline_info
-*.vcf.gz
-*.vcf.gz.tbi
-*.vcf.gz.md5
-*.fa
-*.fa.gz
-*.fai
-*.parquet
-*.stats.txt
+!results/models/**
+!results/pipeline_info/**
+
 
 # --- Nextflow & Pipeline Metadata ---
 # Nextflow creates these directories during runtime
@@ -34,6 +27,7 @@ env/
 venv/
 ENV/
 .env
+requirements.in
 
 # --- ML & Experiment Tracking ---
 # Prevents committing heavy model weights or local logs
