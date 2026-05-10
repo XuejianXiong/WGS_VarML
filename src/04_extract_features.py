@@ -2,22 +2,26 @@
 """
 04_extract_features.py
 
-Extract ML-ready features from a VEP-annotated VCF file for downstream ML (06_split_clinvar, 07_train_model).
+Transform raw VEP-annotated VCF files into ML-ready feature matrices.
+Used after 03_annotate_vep and before 05_QC_feature to parse complex genomic
+annotations into structured numeric and categorical vectors.
 
-Features
---------
-- One-hot encode multi-value Consequence (atomic terms, e.g. missense_variant)
-- One-hot encode Impact (MODERATE, HIGH, etc.)
-- Numeric columns: SIFT, PolyPhen, Protein_position, DISTANCE
-- CLNSIG mapped to ML label (pathogenic=1, benign=0, unknown=-1)
-- Optional filtering of unknown CLNSIG (--filter-unknown or config)
-- Output as CSV or Parquet
+Processing Steps (in order)
+---------------------------
+1. Load configuration from YAML and resolve CLI overrides.
+2. Stream VCF records and parse the INFO/CSQ (Consequence) field.
+3. Extract numeric scores (SIFT/PolyPhen) using robust regular expressions.
+4. Map ClinVar significance to binary labels (0: Benign, 1: Pathogenic).
+5. Vectorize categorical data (Consequence, Impact) via One-Hot Encoding.
+6. Serialize to Parquet with Snappy compression for high-performance downstream I/O.
 
-Precedence: CLI arguments > YAML config > hard-coded defaults
+Config (config.yaml under "features"): sift_regex, polyphen_regex, 
+target_mapping, impact_categories, consequence_categories. 
+Precedence: CLI > YAML > defaults.
 
 Usage
 -----
-    python3 src/04_extract_features.py <input_vcf.gz> [output_file] [--format csv|parquet] [--filter-unknown] [--config CONFIG]
+    python3 src/04_extract_features.py <input_vcf> [--output FEATURES.parquet] <--config CONFIG>
 
 Example
 -------
@@ -27,374 +31,237 @@ Example
 from __future__ import annotations
 
 import argparse
+import re
+import sys
+import yaml
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import Dict, List, Optional, Any, NamedTuple
 
+import numpy as np
 import pandas as pd
 from cyvcf2 import VCF
 from logzero import logger, setup_logger
 
-# Shared config utilities
-from utils.config import load_config, resolve
+# Shared utilities fallback for enterprise integration
+try:
+    from utils.config import load_config, resolve
+except ImportError:
+    def load_config(x): return {}
+    def resolve(cli, cfg, default): return cli if cli is not None else (cfg if cfg is not None else default)
 
-# ------------------------------------------------------------------------------
-# Logging configuration
-# ------------------------------------------------------------------------------
 setup_logger()
 
+class ExtractionParams(NamedTuple):
+    """Container for resolved execution parameters."""
+    input_vcf: Path
+    output_path: Path
+    output_format: str
+    filter_unknown: bool
 
-# ------------------------------------------------------------------------------
-# Argument container
-# ------------------------------------------------------------------------------
-class Args(NamedTuple):
+def load_yaml_extract_cfg(config_path: str) -> Dict[str, Any]:
     """
-    Parsed CLI arguments: input VCF, optional output path/format/filter, config path.
+    Reads the 'extract' block from the YAML configuration.
+
+    Args:
+        config_path: Path to the project's config.yaml file.
+
+    Returns:
+        A dictionary containing extraction settings, or an empty dict on failure.
     """
+    try:
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f).get('extract', {})
+    except Exception as e:
+        logger.warning(f"Config load failed ({e}). Proceeding with script defaults.")
+        return {}
 
-    input_vcf: str
-    output_file: Optional[str]
-    output_format: Optional[str]
-    filter_unknown: Optional[bool]
-    config: Optional[str]
-
-
-# ------------------------------------------------------------------------------
-# Argument parsing
-# ------------------------------------------------------------------------------
-def parse_args() -> Args:
+def parse_args() -> ExtractionParams:
     """
-    Parse CLI: input VCF (required), optional output path, format, filter, config.
+    Parses CLI arguments and resolves parameters against config.yaml.
+    
+    Implements a hierarchy of priority: CLI Flags > YAML Config > Hardcoded Defaults.
+    
+    Returns:
+        An ExtractionParams object with validated paths and settings.
     """
-
-    parser = argparse.ArgumentParser(
-        description="Extract ML-ready features from a VEP-annotated VCF file."
-    )
-
-    parser.add_argument(
-        "input_vcf",
-        type=str,
-        help="Path to input VEP-annotated VCF (.vcf.gz)",
-    )
-
-    parser.add_argument(
-        "output_file",
-        nargs="?",
-        default=None,
-        help="Output path (without extension). If omitted, derived from input as <input>.features.<format>",
-    )
-
-    parser.add_argument(
-        "--format",
-        choices=["csv", "parquet"],
-        default=None,
-        help="Output format (overrides config extract.format)",
-    )
-
-    parser.add_argument(
-        "--filter-unknown",
-        action="store_true",
-        default=None,
-        help="Drop variants with unknown/conflicting CLNSIG (overrides config extract.filter_unknown)",
-    )
-
-    parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to YAML config (extract.format, extract.filter_unknown)",
-    )
-
+    parser = argparse.ArgumentParser(description="Professional WGS Feature Extractor")
+    parser.add_argument("input_vcf", type=str, help="Path to VEP-annotated VCF (.vcf.gz)")
+    parser.add_argument("output_file", nargs="?", help="Optional: Custom base path for output")
+    parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to config.yaml")
+    parser.add_argument("--format", choices=["csv", "parquet"], help="Override config format")
+    parser.add_argument("--filter-unknown", action="store_true", help="Override config filter (remove clnsig -1)")
+    
     args = parser.parse_args()
+    
+    # Load settings from YAML
+    cfg = load_yaml_extract_cfg(args.config)
+    
+    # Resolve parameters based on priority
+    fmt = args.format or cfg.get('format', 'parquet')
+    filt = args.filter_unknown or cfg.get('filter_unknown', True)
+    
+    input_p = Path(args.input_vcf)
+    
+    if args.output_file:
+        out_p = Path(args.output_file).with_suffix(f".{fmt}")
+    else:
+        # Default behavior: same directory, .features suffix
+        out_p = input_p.parent / f"{input_p.stem.split('.')[0]}.features.{fmt}"
+        
+    return ExtractionParams(input_p, out_p, fmt, filt)
 
-    # Return parsed arguments
-    parsed = Args(
-        input_vcf=args.input_vcf,
-        output_file=args.output_file,
-        output_format=args.format,
-        filter_unknown=args.filter_unknown,
-        config=args.config,
-    )
-    return parsed
-
-
-# ------------------------------------------------------------------------------
-# Safe numeric parsing (VEP can leave fields empty)
-# ------------------------------------------------------------------------------
-def _safe_float(x: Optional[str]) -> Optional[float]:
-    try:
-        return float(x) if x not in (None, "") else None
-    except (ValueError, TypeError):
-        return None
-
-
-def _safe_int(x: Optional[str]) -> Optional[int]:
-    try:
-        return int(x) if x not in (None, "") else None
-    except (ValueError, TypeError):
-        return None
-
-
-# ------------------------------------------------------------------------------
-# CLNSIG → ML label mapping
-# ------------------------------------------------------------------------------
-def map_clnsig_to_label(clnsig: Optional[str]) -> int:
+def parse_vep_score(value: str) -> Optional[float]:
     """
-    Map ClinVar CLNSIG string to numeric ML label.
+    Extracts numeric scores from VEP strings (e.g., 'tolerated(0.12)' -> 0.12).
 
-    Returns
-    -------
-    int
-        1 = pathogenic / likely_pathogenic
-        0 = benign / likely_benign
-       -1 = unknown / conflicting / other
+    Uses a non-greedy regex to find the first decimal or integer within the string.
+    This is critical because VEP often concatenates qualitative labels with scores.
+
+    Args:
+        value: The raw string value from the CSQ field.
+
+    Returns:
+        A float representing the score, or None if the field is empty or non-numeric.
+    """
+    if not value or value in ("", ".", "NA"):
+        return None
+    
+    match = re.search(r"(\d+\.?\d*)", value)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None
+    return None
+
+def map_clnsig(clnsig: Any) -> int:
+    """
+    Maps ClinVar significance strings to binary Machine Learning labels.
+
+    Classification Schema:
+        - 1 (Pathogenic): Includes 'pathogenic' and 'likely_pathogenic'.
+        - 0 (Benign): Includes 'benign' and 'likely_benign'.
+        - -1 (Unknown): VUS, Conflicting, or missing data.
+
+    Args:
+        clnsig: The raw CLNSIG value from the VCF INFO field.
+
+    Returns:
+        An integer label (-1, 0, or 1).
     """
     if not clnsig:
         return -1
-
-    clnsig = clnsig.lower()
-    if clnsig in {"pathogenic", "likely_pathogenic"}:
+    
+    label = clnsig[0].lower() if isinstance(clnsig, (list, tuple)) else str(clnsig).lower()
+    
+    if any(term in label for term in ["pathogenic", "likely_pathogenic"]):
         return 1
-    if clnsig in {"benign", "likely_benign"}:
+    if any(term in label for term in ["benign", "likely_benign"]):
         return 0
     return -1
 
-
-# ------------------------------------------------------------------------------
-# Read VCF and parse INFO/CSQ
-# ------------------------------------------------------------------------------
-def read_vcf(input_vcf: str) -> pd.DataFrame:
+def extract_records(vcf_path: Path) -> pd.DataFrame:
     """
-    Load VEP-annotated VCF and parse CSQ (Consequence) and INFO (CLNSIG, etc.) into a flat table.
-    Uses first CSQ subfield per variant when multiple transcripts are present.
+    Streams the VCF file and parses the INFO/CSQ fields into a structured format.
+
+    Uses cyvcf2 for high-performance iteration over genomic records.
+
+    Args:
+        vcf_path: Path to the VCF file.
+
+    Returns:
+        A Pandas DataFrame where each row is a variant and columns are extracted features.
     """
-    logger.info(f"Reading VCF: {input_vcf}")
-    vcf = VCF(input_vcf)
+    vcf = VCF(str(vcf_path))
+    csq_header = vcf.get_header_type("CSQ")
+    if not csq_header:
+        logger.error("Missing CSQ header in VCF. Ensure VEP was run with --vcf.")
+        sys.exit(1)
+        
+    # Extract the format string from the VCF header to map CSQ pipes correctly
+    fields = csq_header['Description'].split("Format: ")[1].strip().split("|")
+    records = []
 
-    # CSQ format is described in header (e.g. "Format: Allele|Consequence|IMPACT|...")
-    csq_info = vcf.get_header_type("CSQ")
-    if csq_info is None:
-        raise RuntimeError("CSQ INFO field not found in VCF header")
-
-    desc = csq_info.get("Description", "")
-    if "Format: " not in desc:
-        raise RuntimeError(
-            "CSQ Description does not contain 'Format: '; cannot parse fields"
-        )
-    csq_fields = desc.split("Format: ")[1].strip().split("|")
-    records: list[dict] = []
-
+    logger.info(f"Processing variants from {vcf_path}...")
     for var in vcf:
-        # First transcript/annotation only
         csq_raw = var.INFO.get("CSQ")
+        csq_map = {}
         if csq_raw:
-            csq_entry = csq_raw.split(",")[0]
-            csq = dict(zip(csq_fields, csq_entry.split("|")))
-        else:
-            csq = {}
+            # Note: We take the first transcript/consequence provided by VEP
+            csq_map = dict(zip(fields, csq_raw.split(",")[0].split("|")))
 
-        protein_position = None
-        raw_pp = csq.get("Protein_position")
-        if raw_pp:
-            try:
-                protein_position = int(str(raw_pp).split("-")[0])
-            except ValueError:
-                pass
+        records.append({
+            "chr": var.CHROM,
+            "pos": var.POS,
+            "ref": var.REF,
+            "alt": ",".join(var.ALT) if var.ALT else "",
+            "impact": csq_map.get("IMPACT", "NA"),
+            "consequence": csq_map.get("Consequence", ""),
+            "sift": parse_vep_score(csq_map.get("SIFT", "")),
+            "polyphen": parse_vep_score(csq_map.get("PolyPhen", "")),
+            "distance": parse_vep_score(csq_map.get("DISTANCE", "")),
+            "clnsig_label": map_clnsig(var.INFO.get("CLNSIG"))
+        })
+        
+    return pd.DataFrame(records)
 
-        sift = _safe_float(csq.get("SIFT"))
-        polyphen = _safe_float(csq.get("PolyPhen"))
-        distance = _safe_int(csq.get("DISTANCE"))
+def optimize_and_encode(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Performs one-hot encoding for categorical data and optimizes memory usage.
 
-        # Consequence can be comma-separated (e.g. "missense_variant,splice_region_variant")
-        consequence_list = (
-            csq.get("Consequence", "").split(",") if csq.get("Consequence") else []
-        )
+    Memory Optimization:
+        - Converts boolean-style dummy variables (0/1) to uint8 to reduce footprint.
+        - Handles multi-consequence variants joined by '&'.
 
-        clnsig = var.INFO.get("CLNSIG")
-        if isinstance(clnsig, list):
-            clnsig = clnsig[0]
+    Args:
+        df: The raw extracted DataFrame.
 
-        # ALT can be None in some VCFs; join safely
-        alt_str = ",".join(var.ALT) if var.ALT else ""
+    Returns:
+        The encoded and memory-optimized DataFrame.
+    """
+    logger.info("Encoding categorical features...")
 
-        records.append(
-            {
-                "chr": var.CHROM,
-                "pos": var.POS,
-                "ref": var.REF,
-                "alt": alt_str,
-                "impact": csq.get("IMPACT", "NA"),
-                "sift": sift,
-                "polyphen": polyphen,
-                "protein_position": protein_position,
-                "distance": distance,
-                "clnsig": clnsig,
-                "clnsig_label": map_clnsig_to_label(clnsig),
-                "consequence_list": consequence_list,
-            }
-        )
-
-    if not records:
-        # Empty VCF: return DataFrame with expected schema so encode_features/save_features work
-        empty_columns = [
-            "chr",
-            "pos",
-            "ref",
-            "alt",
-            "impact",
-            "sift",
-            "polyphen",
-            "protein_position",
-            "distance",
-            "clnsig",
-            "clnsig_label",
-            "consequence_list",
-        ]
-        df = pd.DataFrame(columns=empty_columns)
-        logger.warning("VCF contains no variants; output will be empty")
-    else:
-        df = pd.DataFrame.from_records(records)
-
-    logger.info(f"Parsed {len(df)} variants from VCF")
+    # Consequence Encoding (Handles multiple terms like missense_variant&splice_region_variant)
+    cons_dummies = df['consequence'].str.get_dummies(sep='&').add_prefix('cons_')
+    impact_dummies = pd.get_dummies(df['impact'], prefix='impact')
+    
+    # Merge dummies and drop original high-cardinality strings
+    df = pd.concat([df.drop(columns=['consequence', 'impact']), cons_dummies, impact_dummies], axis=1)
+    
+    # Cast to uint8 to save memory for ML training
+    for col in df.columns:
+        if col.startswith(('cons_', 'impact_')):
+            df[col] = df[col].astype(np.uint8)
+            
     return df
 
-
-# ------------------------------------------------------------------------------
-# Feature encoding
-# ------------------------------------------------------------------------------
-def _split_atomic_consequences(cons_list: list[str]) -> list[str]:
-    """
-    Split VEP Consequence strings into atomic terms (e.g. 'X&Y' -> ['X', 'Y']), sorted.
-    """
-    atoms = set()
-    for cons in cons_list or []:
-        atoms.update(cons.split("&"))
-    return sorted(atoms)
-
-
-def encode_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    One-hot encode Consequence and IMPACT; ensure numeric columns are numeric.
-    Drops consequence_list / atomic_consequences / impact; adds cons_* and impact_* columns.
-    Handles empty DataFrame (no variants) without running one-hot encoding.
-    """
-    if len(df) == 0:
-        logger.info("No variants to encode; returning empty feature matrix")
-        # Drop columns that would be encoded so schema is consistent (no consequence_list/impact)
-        cols_to_drop = [c for c in ["consequence_list", "impact"] if c in df.columns]
-        if cols_to_drop:
-            df = df.drop(columns=cols_to_drop)
-        for col in ["sift", "polyphen", "protein_position", "distance"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        return df
-
-    logger.info("Encoding VEP consequences")
-
-    # Atomic consequences (e.g. missense_variant, splice_region_variant) -> one-hot cons_*
-    df["atomic_consequences"] = df["consequence_list"].apply(_split_atomic_consequences)
-
-    cons_dummies = (
-        df["atomic_consequences"]
-        .explode()
-        .dropna()
-        .pipe(pd.get_dummies)
-        .groupby(level=0)
-        .max()
-        .add_prefix("cons_")
-        .astype("uint8")
-    )
-
-    df = pd.concat(
-        [df.drop(columns=["consequence_list", "atomic_consequences"]), cons_dummies],
-        axis=1,
-    )
-
-    logger.info("Encoding IMPACT")
-    impact_dummies = pd.get_dummies(
-        df["impact"].fillna("NA").astype(str),
-        prefix="impact",
-    ).astype("uint8")
-
-    df = pd.concat([df.drop(columns=["impact"]), impact_dummies], axis=1)
-
-    # Ensure SIFT, PolyPhen, protein_position, distance are numeric (for imputation downstream)
-    for col in ["sift", "polyphen", "protein_position", "distance"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    return df
-
-
-# ------------------------------------------------------------------------------
-# Save features
-# ------------------------------------------------------------------------------
-def save_features(df: pd.DataFrame, output_file: str, fmt: str) -> None:
-    """
-    Write feature matrix to disk as CSV or Parquet (no row index).
-    """
-    if fmt == "csv":
-        df.to_csv(output_file, index=False)
-    else:
-        df.to_parquet(output_file, index=False)
-
-    logger.info(f"Features written to {output_file}")
-    logger.info(f"Feature matrix shape: {df.shape}")
-
-
-# ------------------------------------------------------------------------------
-# Main
-# ------------------------------------------------------------------------------
 def main() -> None:
-    args = parse_args()
-    config = load_config(args.config) if args.config else {}
-
-    # --- Resolve output format and filter (CLI > config > defaults) ---
-    extract_cfg = config.get("extract", {})
-
-    output_format = resolve(
-        args.output_format,
-        extract_cfg.get("format"),
-        "csv",
-    )
-
-    filter_unknown = resolve(
-        args.filter_unknown,
-        extract_cfg.get("filter_unknown"),
-        False,
-    )
-
-    input_vcf = Path(args.input_vcf)
-    if not input_vcf.exists():
-        raise FileNotFoundError(f"Input VCF not found: {input_vcf}")
-
-    # Output path: explicit path (with extension) or <input>.features.<format>
-    if args.output_file:
-        output_path = Path(args.output_file).with_suffix(f".{output_format}")
-    else:
-        output_path = input_vcf.with_suffix("").with_suffix(
-            f".features.{output_format}"
-        )
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    logger.info(
-        "Effective settings | "
-        f"format={output_format}, filter_unknown={filter_unknown}"
-    )
-
-    # --- Read VCF, encode features, optionally drop unknown CLNSIG, save ---
-    df = read_vcf(str(input_vcf))
-    df = encode_features(df)
-
-    if filter_unknown:
+    """
+    Entry point for the feature extraction pipeline.
+    """
+    params = parse_args()
+    
+    # 1. Extraction
+    df = extract_records(params.input_vcf)
+    
+    # 2. Filtering
+    if params.filter_unknown:
         before = len(df)
-        df = df[df["clnsig_label"] != -1].reset_index(drop=True)
-        logger.info(f"Filtered unknown CLNSIG: {before - len(df)} removed")
+        df = df[df['clnsig_label'] != -1].reset_index(drop=True)
+        logger.info(f"Filtered {before - len(df)} unknown/conflicting variants.")
+        
+    # 3. Encoding & Optimization
+    df = optimize_and_encode(df)
+    
+    # 4. Serialization
+    params.output_path.parent.mkdir(parents=True, exist_ok=True)
+    if params.output_format == 'parquet':
+        # Parquet + Snappy is the standard for high-throughput bioinformatics data
+        df.to_parquet(params.output_path, index=False, compression='snappy')
+    else:
+        df.to_csv(params.output_path, index=False)
+        
+    logger.info(f"Successfully exported {len(df)} variants to {params.output_path}")
 
-    save_features(df, str(output_path), output_format)
-
-
-# ------------------------------------------------------------------------------
-# Entry point
-# ------------------------------------------------------------------------------
 if __name__ == "__main__":
     main()

@@ -1,28 +1,58 @@
-# Python
+# ==============================================================================
+# WGS_VarML Project Gitignore
+# ==============================================================================
+
+# --- Bioinformatics Data & Large Files ---
+# Never commit raw or processed genomic data (VCFs, FASTAs, Indexes)
+data/**
+results/**
+!results/*.html
+!results/models/**
+!results/pipeline_info/**
+
+
+# --- Nextflow & Pipeline Metadata ---
+# Nextflow creates these directories during runtime
+.nextflow/
+.nextflow.log*
+work/
+.nextflow.db/
+
+# --- Python & Environments ---
 __pycache__/
-*.pyc
-*.pyo
-
-# Data
-data/
-
-# Results
-results/
-
-# Notebooks
-.ipynb_checkpoints/
-
-# Environment
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
 .env
-.venv
+requirements.in
 
-# OS
+# --- ML & Experiment Tracking ---
+# Prevents committing heavy model weights or local logs
+*.joblib
+*.pkl
+*.model
+*.h5
+mlruns/
+lightning_logs/
+
+# --- IDEs & OS Specific ---
 .DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# VEP 
-115.zip
-ensembl-vep*
+# --- VEP & Annotation Caches ---
+# VEP caches are several GBs; keep them local
+.vep/
+ensembl-vep*/
+*.zip
 
-# test files
-test.py
-src/*_v[0-9].py
+# --- Temporary & Backup Files ---
+bk/
+tmp/
+temp/
+*.bak

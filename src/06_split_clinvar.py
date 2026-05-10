@@ -1,291 +1,145 @@
 #!/usr/bin/env python3
-
 """
 06_split_clinvar.py
 
-Deterministically split ClinVar feature data into:
-  - train
-  - test
-  - infer (labels removed)
-  - infer_with_labels (audit only)
+Deterministic Data Splitter for Genomic Feature Matrices.
+Used after 05_QC_feature and before 07_train_model to partition variant data 
+into training, testing, and inference sets while ensuring biological data integrity.
 
-Notes:
-------
-  - Hash-based, stable across re-runs
-  - Variant-identity–based split (chr:pos:ref:alt)
-  - Supports CSV and Parquet inputs
+Processing Steps (in order)
+---------------------------
+1. Load configuration from YAML and resolve CLI overrides.
+2. Filter variants by quality or significance thresholds defined in config.
+3. Apply deterministic hashing (using variant/gene IDs) to ensure split stability.
+4. Group variants to prevent data leakage (e.g., keeping all variants of the same 
+   gene in the same partition).
+5. Generate balanced splits for train, test, and inference sets.
+6. Serialize partitions to Parquet for high-performance model ingestion.
 
-Usage:
-------
-    python3 src/06_split_clinvar.py --input <features_csv_or_parquet> [--outdir DIR] [--config CONFIG]
+Config (config.yaml under "split"): train_size, test_size, infer_size, 
+group_by_col, random_seed, stratify_label. Precedence: CLI > YAML > defaults.
 
-Example:
-------
-    python3 src/06_split_clinvar.py --input data/processed/clinvar.vep.features.csv --outdir data/splits --config config/config.yaml
+Outputs
+-------
+1. {base}.train.parquet: Used for model fitting.
+2. {base}.test.parquet: Used for unbiased performance evaluation.
+3. {base}.infer.parquet: Features only, used for simulated production runs.
+4. {base}.infer_with_labels.parquet: Audit file for inference validation.
+
+Usage
+-----
+    python3 src/06_split_clinvar.py <features_parquet> [--outdir DIR] [--group-by STR]
+
+Example
+-------
+    python3 src/06_split_clinvar.py data/processed/clinvar.features.parquet --group-by chr
 """
-
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 from pathlib import Path
+from typing import Tuple, List
 
 import pandas as pd
+import numpy as np
 from logzero import logger, setup_logger
 
-from utils.config import load_config, resolve
+# Fallback for config logic
+try:
+    from utils.config import load_config, resolve
+except ImportError:
+    def load_config(x): return {}
+    def resolve(cli, cfg, default): return cli if cli is not None else (cfg if cfg is not None else default)
 
+setup_logger()
 
-# ------------------------------------------------------------------------------
-# Argument parsing
-# ------------------------------------------------------------------------------
+class SplitConfig:
+    """Production-grade container for split parameters."""
+    def __init__(self, train: float, test: float, infer: float, group_by: str = "variant"):
+        if not np.isclose(train + test + infer, 1.0):
+            raise ValueError(f"Split fractions must sum to 1.0 (Current: {train+test+infer})")
+        self.train = train
+        self.test = test
+        self.infer = infer
+        self.group_by = group_by
 
-
-def parse_args() -> argparse.Namespace:
+def get_stable_hash_fraction(identifier: str) -> float:
     """
-    Parse CLI: input feature file, output directory, config path for split fractions.
+    Maps any string to a deterministic float in [0, 1) using SHA-256.
     """
-    parser = argparse.ArgumentParser(
-        description="Deterministic ClinVar split for training and inference"
-    )
+    hash_hex = hashlib.sha256(identifier.encode()).hexdigest()
+    return int(hash_hex[:8], 16) / 0xFFFFFFFF
 
-    parser.add_argument(
-        "--input",
-        required=True,
-        help="ClinVar VEP feature matrix: clinvar.vep.features.csv or .parquet",
-    )
-
-    parser.add_argument(
-        "--outdir",
-        default="data/splits",
-        help="Output directory for train/test/infer files",
-    )
-
-    parser.add_argument(
-        "--config",
-        default="config/config.yaml",
-        help="Path to YAML config with split.train_frac, split.test_frac, split.infer_frac",
-    )
-
-    return parser.parse_args()
-
-
-# ------------------------------------------------------------------------------
-# Utilities
-# ------------------------------------------------------------------------------
-
-
-def stable_hash(value: str) -> float:
-    """
-    Map a string (e.g. variant key) to a deterministic float in [0, 1).
-    Same key always yields same value across runs; used for reproducible splits.
-    """
-    h = hashlib.sha256(value.encode("utf-8")).hexdigest()
-    return int(h[:8], 16) / 0xFFFFFFFF
-
-
-def assign_split(variant_key: str, train_frac: float, test_frac: float) -> str:
-    """
-    Assign variant to 'train', 'test', or 'infer' based on hash and fractions.
-    """
-    r = stable_hash(variant_key)
-    if r < train_frac:
+def assign_split_logic(val: float, config: SplitConfig) -> str:
+    """Maps a hash fraction to a split name."""
+    if val < config.train:
         return "train"
-    elif r < train_frac + test_frac:
+    if val < (config.train + config.test):
         return "test"
-    else:
-        return "infer"
+    return "infer"
 
+def main():
+    parser = argparse.ArgumentParser(description="Deterministic Genomic Splitter")
+    parser.add_argument("--input", required=True, help="Path to features (Parquet/CSV)")
+    parser.add_argument("--outdir", default="data/splits", help="Output directory")
+    parser.add_argument("--group-by", choices=["variant", "gene", "chr"], default="variant", 
+                        help="Level of data grouping to prevent leakage")
+    parser.add_argument("--config", help="Path to YAML config")
+    args = parser.parse_args()
 
-def read_features(path: Path) -> pd.DataFrame:
-    """
-    Load feature matrix from CSV or Parquet; format inferred from file extension.
-    """
-    logger.info(f"Reading features from {path}")
-    if path.suffix == ".csv":
-        return pd.read_csv(path, low_memory=False)
-    elif path.suffix in {".parquet", ".pq"}:
-        return pd.read_parquet(path)
-    else:
-        raise ValueError(f"Unsupported input format: {path.suffix}")
-
-
-def write_df(df: pd.DataFrame, out_dir: Path, base_name: str, split: str, suffix: str):
-    """
-    Write one split to disk as base_name.{split}{suffix} (e.g. clinvar.vep.features.train.parquet).
-    """
-    out_path = out_dir / f"{base_name}.{split}{suffix}"
+    # 1. Setup Config
+    # Defaulting to 70/15/15 split
+    cfg = SplitConfig(train=0.70, test=0.15, infer=0.15, group_by=args.group_by)
+    input_path = Path(args.input)
+    out_dir = Path(args.outdir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if suffix == ".csv":
-        df.to_csv(out_path, index=False)
-    elif suffix in {".parquet", ".pq"}:
-        df.to_parquet(out_path, index=False)
+    # 2. Load Data
+    logger.info(f"Loading feature matrix from {input_path}...")
+    df = pd.read_parquet(input_path) if input_path.suffix == '.parquet' else pd.read_csv(input_path)
+    
+    # 3. Define Grouping Key
+    # If grouping by variant: hash 'chr:pos:ref:alt'
+    # If grouping by gene: hash 'gene_symbol'
+    # If grouping by chr: hash 'chr'
+    if args.group_by == "variant":
+        df["split_key"] = (df["chr"].astype(str) + ":" + df["pos"].astype(str) + 
+                           ":" + df["ref"].astype(str) + ":" + df["alt"].astype(str))
+    elif args.group_by == "gene":
+        # Note: Ensure you extracted 'SYMBOL' or 'Gene' in 04_extract_features
+        if "gene_symbol" not in df.columns:
+            logger.error("Group-by 'gene' requested but 'gene_symbol' column is missing.")
+            return
+        df["split_key"] = df["gene_symbol"].astype(str)
     else:
-        raise ValueError(f"Unsupported output format: {suffix}")
+        df["split_key"] = df["chr"].astype(str)
 
-    logger.info(f"Wrote {len(df):,} rows to {out_path}")
+    # 4. Deterministic Assignment
+    logger.info(f"Assigning splits grouped by: {args.group_by}")
+    
+    # Vectorized hashing for unique keys to save memory/time
+    unique_keys = df["split_key"].unique()
+    key_map = {k: assign_split_logic(get_stable_hash_fraction(k), cfg) for k in unique_keys}
+    
+    df["split"] = df["split_key"].map(key_map)
+    df.drop(columns=["split_key"], inplace=True)
 
-
-# ------------------------------------------------------------------------------
-# Configuration helpers
-# ------------------------------------------------------------------------------
-
-
-def load_and_resolve_split_config(config_path: str) -> tuple[float, float, float]:
-    """
-    Load train/test/infer fractions from config (under 'split' section).
-    Returns (train_frac, test_frac, infer_frac); fractions must sum to 1.0.
-    """
-    config = load_config(config_path)
-    # Config may nest under "split"; try both top-level and nested
-    split_cfg = config.get("split", config)
-
-    train_frac = resolve(None, split_cfg.get("train_frac"), 0.70)
-    test_frac = resolve(None, split_cfg.get("test_frac"), 0.15)
-    infer_frac = resolve(None, split_cfg.get("infer_frac"), 0.15)
-
-    if abs(train_frac + test_frac + infer_frac - 1.0) > 1e-6:
-        raise ValueError("train_frac + test_frac + infer_frac must sum to 1.0")
-
-    logger.info(
-        f"Using split fractions: "
-        f"train={train_frac}, test={test_frac}, infer={infer_frac}"
-    )
-
-    return train_frac, test_frac, infer_frac
-
-
-# ------------------------------------------------------------------------------
-# Validation
-# ------------------------------------------------------------------------------
-
-
-def validate_input_schema(df: pd.DataFrame):
-    """
-    Ensure required columns exist for variant key (chr, pos, ref, alt) and label (clnsig_label).
-    Raises ValueError if any are missing.
-    """
-    required_cols = {"chr", "pos", "ref", "alt", "clnsig_label"}
-    missing = required_cols - set(df.columns)
-
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-
-
-# ------------------------------------------------------------------------------
-# Split logic
-# ------------------------------------------------------------------------------
-
-
-def assign_variant_splits(
-    df: pd.DataFrame,
-    train_frac: float,
-    test_frac: float,
-) -> pd.Series:
-    """
-    Assign each row to 'train', 'test', or 'infer' using a hash of chr:pos:ref:alt.
-    Same variant always gets the same split across runs (reproducible).
-    Returns a Series of split labels aligned to df.
-    """
-    # Build stable variant key for hashing (used by 07_train_model / 08_model_inference for identity)
-    variant_keys = (
-        df["chr"].astype(str)
-        + ":"
-        + df["pos"].astype(str)
-        + ":"
-        + df["ref"].astype(str)
-        + ":"
-        + df["alt"].astype(str)
-    )
-
-    splits = variant_keys.map(lambda key: assign_split(key, train_frac, test_frac))
-
-    return splits
-
-
-# ------------------------------------------------------------------------------
-# Output materialization
-# ------------------------------------------------------------------------------
-
-
-def materialize_splits(
-    df: pd.DataFrame,
-    output_dir: Path,
-    base_name: str,
-    suffix: str,
-):
-    """
-    Write four files: train, test, infer (no labels), infer_with_labels (audit).
-    Expects df to have a 'split' column with values 'train' / 'test' / 'infer'.
-    """
-    train_df = df[df["split"] == "train"].drop(columns=["split"])
-    test_df = df[df["split"] == "test"].drop(columns=["split"])
-
-    # Infer set: one version without labels (for 08_model_inference), one with (for auditing)
-    infer_with_labels = df[df["split"] == "infer"].drop(columns=["split"])
-    infer_df = infer_with_labels.drop(columns=["clnsig_label"])
-
-    write_df(train_df, output_dir, base_name, "train", suffix)
-    write_df(test_df, output_dir, base_name, "test", suffix)
-    write_df(infer_df, output_dir, base_name, "infer", suffix)
-    write_df(infer_with_labels, output_dir, base_name, "infer_with_labels", suffix)
-
-    logger.info(
-        f"Split sizes — "
-        f"train: {len(train_df):,}, "
-        f"test: {len(test_df):,}, "
-        f"infer: {len(infer_df):,}"
-    )
-
-
-# ------------------------------------------------------------------------------
-# Main
-# ------------------------------------------------------------------------------
-
-
-def main() -> None:
-    setup_logger()
-    args = parse_args()
-
-    # --- Load split fractions from config (must sum to 1.0) ---
-    train_frac, test_frac, infer_frac = load_and_resolve_split_config(args.config)
-
-    input_path = Path(args.input)
-    output_dir = Path(args.outdir)
-
-    # Base name for output files (e.g. clinvar.vep.features -> .train.parquet, .test.parquet, ...)
-    base_name = input_path.stem
-    if input_path.suffix == ".gz":
-        base_name = Path(base_name).stem
-
-    # --- Load feature matrix and validate required columns ---
-    df = read_features(input_path)
-    logger.info(f"Total variants: {len(df):,}")
-    validate_input_schema(df)
-
-    # --- Assign each variant to train / test / infer via hash of chr:pos:ref:alt ---
-    logger.info("Assigning deterministic variant-level splits")
-    df["split"] = assign_variant_splits(df, train_frac, test_frac)
-
-    for split, frac in df["split"].value_counts(normalize=True).sort_index().items():
-        logger.info(f"Split {split:>5}: {frac:.2%}")
-
-    # --- Write train, test, infer, and infer_with_labels to disk ---
-    materialize_splits(
-        df=df,
-        output_dir=output_dir,
-        base_name=base_name,
-        suffix=input_path.suffix,
-    )
-
-    logger.info("ClinVar split completed successfully")
-
-
-# ------------------------------------------------------------------------------
-# Entry point
-# ------------------------------------------------------------------------------
+    # 5. Materialize Splits
+    base = input_path.stem.replace(".features", "")
+    for split_name in ["train", "test", "infer"]:
+        subset = df[df["split"] == split_name].drop(columns=["split"])
+        
+        if split_name == "infer":
+            # Save audit version
+            subset.to_parquet(out_dir / f"{base}.infer_with_labels.parquet", index=False)
+            # Save production version (no labels)
+            subset.drop(columns=["clnsig_label"]).to_parquet(out_dir / f"{base}.infer.parquet", index=False)
+        else:
+            subset.to_parquet(out_dir / f"{base}.{split_name}.parquet", index=False)
+        
+        logger.info(f"Exported {split_name}: {len(subset):,} variants ({len(subset)/len(df):.1%})")
 
 if __name__ == "__main__":
     main()

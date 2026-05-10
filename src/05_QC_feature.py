@@ -21,11 +21,11 @@ distance_clip_pct, distance_clip_note. Precedence: CLI > YAML > defaults.
 
 Usage
 -----
-    python3 src/05_QC_feature.py <features_csv_or_parquet> [--output REPORT.html] [--config CONFIG]
+    python3 src/05_QC_feature.py <features_csv_or_parquet> [--output REPORT.html] <--config CONFIG>
 
 Example
 -------
-    python3 src/05_QC_feature.py data/processed/clinvar.vep.features.csv --output results/qc_report.html --config config/config.yaml
+    python3 src/05_QC_feature.py data/processed/clinvar.features.parquet --output results/qc_report.html --config config/config.yaml
 """
 
 from __future__ import annotations
@@ -425,3 +425,6 @@ def main() -> None:
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
+
+
+

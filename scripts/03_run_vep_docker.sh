@@ -1,134 +1,144 @@
 #!/usr/bin/env bash
-# =============================================================================
-# Run Ensembl VEP (Docker) on a VCF file (production-ready, flexible)
+# ========================================================================================
+# SCRIPT: 03_run_vep_docker.sh
+# ========================================================================================
+# @Description: Wrapper for Ensembl VEP Docker execution.
+# @Usage: bash 03_run_vep_docker.sh <input_vcf> <output_name> [options]
 #
-# Usage:
-#   ./scripts/03_run_vep_docker.sh <input_vcf> <output_vcf> [options]
+# @Arguments:
+#   1. INPUT_VCF (Required): Absolute path to the normalized VCF.
+#   2. OUTPUT_VCF (Required): Target name for the annotated VCF.
 #
-# Options (all optional):
-#   --threads N         Number of CPU threads (default: 4)
-#   --assembly STR      Genome assembly (default: GRCh38)
-#   --fields STR        Comma-separated VEP fields (default: Uploaded_variation,Location,Allele,Gene,SYMBOL,Feature,Feature_type,BIOTYPE,CANONICAL,MANE_SELECT,Consequence,IMPACT,EXON,INTRON,Protein_position,Amino_acids,Codons,SIFT,PolyPhen,DISTANCE,STRAND)
-#   --chr STR           Comma-separated chromosomes (default: 1-22,X,Y,MT)
-#   --fasta PATH        FASTA reference file (default: based on cache + assembly)
-# =============================================================================
+# @Options:
+#   --threads  : Number of CPU cores for parallel annotation (Default: 4).
+#   --assembly : Genome assembly version (Default: GRCh38).
+#   --buffer   : VEP buffer size for memory management (Default: 5000).
+#   --fields   : Custom CSQ fields to extract (Default: $DEFAULT_FIELDS).
+# ========================================================================================
 
 set -euo pipefail
 IFS=$'\n\t'
 
-log() { echo "[`date '+%Y-%m-%d %H:%M:%S'`] $*"; }
+# --- ANSI Colors for Terminal Output ---
+BOLD='\033[1m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-# ----------------------------
-# Required positional arguments
-# ----------------------------
-if [[ $# -lt 2 ]]; then
-    log "ERROR: At least 2 arguments required."
-    log "Usage: $0 <input_vcf> <output_vcf> [--threads N] [--assembly STR] [--fields STR] [--chr STR] [--fasta PATH]"
+# --- Logging Functions ---
+log()   { echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] INFO: ${NC}$*"; }
+warn()  { echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARN: ${NC}$*"; }
+error() { echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: ${NC}$*"; exit 1; }
+
+trap 'error "Script interrupted by user."' INT TERM
+
+# --- Configuration & Defaults ---
+VEP_CACHE_DIR="$HOME/.vep"
+VEP_IMAGE="ensemblorg/ensembl-vep:latest"
+DEFAULT_FIELDS="Uploaded_variation,Location,Allele,Gene,SYMBOL,Feature,Feature_type,BIOTYPE,CANONICAL,MANE_SELECT,Consequence,IMPACT,EXON,INTRON,Protein_position,Amino_acids,Codons,SIFT,PolyPhen,DISTANCE,STRAND"
+
+usage() {
+    cat << EOF
+${BOLD}Usage:${NC} $0 <input_vcf> <output_vcf> [OPTIONS]
+
+${BOLD}Arguments:${NC}
+  input_vcf        Path to input VCF (Absolute or Relative)
+  output_vcf       Path for annotated output VCF
+
+${BOLD}Options:${NC}
+  --threads N      CPU cores (Default: 4)
+  --assembly STR   Genome assembly (Default: GRCh38)
+  --buffer N       VEP buffer size (Default: 5000)
+  --fields STR     Custom comma-separated fields
+EOF
     exit 1
-fi
+}
 
+[[ $# -lt 2 ]] && usage
+
+# --- Argument Parsing ---
 INPUT_VCF="$1"
 OUTPUT_VCF="$2"
 shift 2
 
-# ----------------------------
-# Default optional parameters
-# ----------------------------
 THREADS=4
 ASSEMBLY="GRCh38"
-VEP_FIELDS="Uploaded_variation,Location,Allele,Gene,SYMBOL,Feature,Feature_type,BIOTYPE,CANONICAL,MANE_SELECT,Consequence,IMPACT,EXON,INTRON,Protein_position,Amino_acids,Codons,SIFT,PolyPhen,DISTANCE,STRAND"
-CHR_LIST="1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,X,Y,MT"
-FASTA_PATH=""  # will set below if not provided
+BUFFER_SIZE=5000
+FIELDS="$DEFAULT_FIELDS"
 
-VEP_CACHE_DIR="$HOME/.vep"
-VEP_VERSION="115"
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-# ----------------------------
-# Parse optional arguments
-# ----------------------------
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --threads) THREADS="$2"; shift 2 ;;
+        --threads)  THREADS="$2"; shift 2 ;;
         --assembly) ASSEMBLY="$2"; shift 2 ;;
-        --fields) VEP_FIELDS="$2"; shift 2 ;;
-        --chr) CHR_LIST="$2"; shift 2 ;;
-        --fasta) FASTA_PATH="$2"; shift 2 ;;
-        *) log "ERROR: Unknown option $1"; exit 1 ;;
+        --buffer)   BUFFER_SIZE="$2"; shift 2 ;;
+        --fields)   FIELDS="$2"; shift 2 ;;
+        *) error "Unknown option: $1" ;;
     esac
 done
 
-# Set default FASTA if not provided
-if [[ -z "$FASTA_PATH" ]]; then
-    FASTA_PATH="/opt/vep/.vep/homo_sapiens/${VEP_VERSION}_${ASSEMBLY}/Homo_sapiens.${ASSEMBLY}.dna.toplevel.fa.gz"
-fi
+# ==========================================
+# Path Resolution (The "Nextflow Bridge")
+# ==========================================
+# Resolve absolute paths to ensure Docker volume mapping works correctly
+[[ "$INPUT_VCF" == /* ]] && ABS_INPUT="$INPUT_VCF" || ABS_INPUT="$(pwd)/$INPUT_VCF"
+[[ "$OUTPUT_VCF" == /* ]] && ABS_OUTPUT="$OUTPUT_VCF" || ABS_OUTPUT="$(pwd)/$OUTPUT_VCF"
 
-ABS_INPUT="$PROJECT_ROOT/$INPUT_VCF"
-ABS_OUTPUT="$PROJECT_ROOT/$OUTPUT_VCF"
+[[ -f "$ABS_INPUT" ]] || error "Input VCF not found at $ABS_INPUT"
+[[ -d "$VEP_CACHE_DIR" ]] || error "VEP cache directory not found at $VEP_CACHE_DIR"
 
-# ----------------------------
-# Sanity checks
-# ----------------------------
-[[ "$THREADS" =~ ^[0-9]+$ ]] || { log "ERROR: --threads must be an integer"; exit 1; }
-[[ -f "$ABS_INPUT" ]] || { log "ERROR: Input VCF not found: $ABS_INPUT"; exit 1; }
-[[ -d "$VEP_CACHE_DIR" ]] || { log "ERROR: VEP cache not found: $VEP_CACHE_DIR"; exit 1; }
+# Extract directories and filenames for Docker mounting
+INPUT_DIR="$(dirname "$ABS_INPUT")"
+OUTPUT_DIR="$(dirname "$ABS_OUTPUT")"
+IN_FILE="$(basename "$ABS_INPUT")"
+OUT_FILE="$(basename "$ABS_OUTPUT")"
 
-if [[ -n "$FASTA_PATH" && "$FASTA_PATH" != /opt/vep/* ]]; then
-    [[ -f "$FASTA_PATH" ]] || { log "ERROR: FASTA reference not found: $FASTA_PATH"; exit 1; }
-fi
-log "Resolved FASTA: $(basename "$FASTA_PATH")"
+log "Staging environment confirmed."
+log "Input:  $ABS_INPUT"
+log "Output: $ABS_OUTPUT"
 
-if [[ -z "${VEP_FIELDS:-}" ]]; then
-    log "INFO: Using default VEP field set"
-else
-    log "INFO: Using custom --fields overrides VEP defaults"
-fi
+# ==========================================
+# VEP Execution (Docker)
+# ==========================================
+log "Launching VEP Container (${BOLD}$ASSEMBLY${NC})..."
 
-# ----------------------------
-# Docker & VEP settings
-# ----------------------------
-VEP_IMAGE="ensemblorg/ensembl-vep" 
-
-# ----------------------------
-# Run VEP via Docker
-# ----------------------------
-log "Starting VEP Docker annotation"
-log "Input       : $ABS_INPUT"
-log "Output      : $ABS_OUTPUT"
-log "Assembly    : $ASSEMBLY"
-log "Threads     : $THREADS"
-log "VEP fields  : $VEP_FIELDS"
-log "Chromosomes : $CHR_LIST"
-log "FASTA       : $FASTA_PATH"
-log "Cache       : $VEP_CACHE_DIR"
-
-log "NOTE: MANE_SELECT requires a recent Ensembl cache; verify if missing in output."
-
-log "Running VEP annotation..."
-
+# Note: We mount the parent directories of the input and output separately.
+# This allows the script to work even if the files are in different work/ folders.
 docker run --rm \
-    -v "$PROJECT_ROOT/data:/opt/data" \
-    -v "$VEP_CACHE_DIR:/opt/vep/.vep" \
+    --user "$(id -u):$(id -g)" \
+    -v "$INPUT_DIR:/opt/input:ro" \
+    -v "$OUTPUT_DIR:/opt/output:rw" \
+    -v "$VEP_CACHE_DIR:/opt/vep/.vep:ro" \
     "$VEP_IMAGE" \
     vep \
-        -i "/opt/data/${INPUT_VCF#data/}" \
-        -o "/opt/data/${OUTPUT_VCF#data/}" \
+        -i "/opt/input/$IN_FILE" \
+        -o "/opt/output/$OUT_FILE" \
         --vcf \
+        --compress_output bgzip \
+        --force_overwrite \
         --offline \
         --cache \
         --dir_cache /opt/vep/.vep \
         --assembly "$ASSEMBLY" \
-        --fasta "$FASTA_PATH" \
-        --fields "$VEP_FIELDS" \
         --fork "$THREADS" \
-        --buffer_size 5000 \
-        --compress_output bgzip \
-        --force_overwrite \
-        --chr "$CHR_LIST" \
+        --buffer_size "$BUFFER_SIZE" \
+        --fields "$FIELDS" \
         --pick \
         --pick_order mane_select,canonical,appris,tsl,biotype,rank \
-        --no_stats
+        --no_stats \
+        --everything
 
-
-log "VEP annotation completed successfully."
-log "Output file: $ABS_OUTPUT"
+# ==========================================
+# Post-Processing: Tabix Indexing
+# ==========================================
+if [[ -f "$ABS_OUTPUT" ]]; then
+    log "Indexing output VCF..."
+    docker run --rm \
+        -v "$OUTPUT_DIR:/opt/output:rw" \
+        "$VEP_IMAGE" \
+        tabix -p vcf "/opt/output/$OUT_FILE"
+    
+    log "${BOLD}Annotation Complete.${NC}"
+else
+    error "Annotation failed: Output file not detected."
+fi
