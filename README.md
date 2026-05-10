@@ -112,15 +112,14 @@ Pre-trained models are bundled with their specific imputer.joblib and feature_or
 
 ## Reproducibility
 
-- Docker Support
+### Docker Support
 
 For production environments, use the provided Docker profile to ensure OS-level consistency:
 
 ```bash
 nextflow run nextflow/main.nf -profile docker
 ```
-
-- Requirements
+### Requirements
   - Python 3.9+
   - Nextflow 23.10+
   - Docker (Optional)
@@ -139,3 +138,6 @@ nextflow run nextflow/main.nf -profile docker
 
 🚧 SHAP-based feature interpretability modules
 
+## License
+
+MIT License – feel free to use, adapt, and share.
