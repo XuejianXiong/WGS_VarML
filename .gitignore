@@ -4,8 +4,11 @@
 
 # --- Bioinformatics Data & Large Files ---
 # Never commit raw or processed genomic data (VCFs, FASTAs, Indexes)
-data/
-results/
+data/**
+results/**
+!results/*.html
+!results/models
+!results/pipeline_info
 *.vcf.gz
 *.vcf.gz.tbi
 *.vcf.gz.md5
@@ -55,7 +58,6 @@ ensembl-vep*/
 *.zip
 
 # --- Temporary & Backup Files ---
-test.py
 bk/
 tmp/
 temp/
