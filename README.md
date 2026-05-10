@@ -1,17 +1,18 @@
 # WGS_VarML
+### Genomic Variant Pathogenicity Prediction Pipeline
 
-Machine learning–based prediction of genomic variant pathogenicity
-using whole-genome sequencing (WGS) data.
+A scalable, reproducible Nextflow workflow for whole-genome sequencing (WGS) variant classification.
 
 ## Overview
 
-WGS_VarML is an end-to-end pipeline for predicting the pathogenicity of genomic variants.
+WGS_VarML is an end-to-end computational pipeline designed to predict the clinical significance of genomic variants using machine learning. It integrates high-confidence labels from ClinVar with functional annotations from VEP, gnomAD, and CADD to train and deploy supervised classifiers.
 
- - High-confidence clinical labels are sourced from ClinVar.
- - Variants are annotated with functional, population, and conservation information using tools such as VEP, CADD, and allele frequency databases like gnomAD.
- - The pipeline produces ML-ready features and trains supervised models for binary classification (pathogenic vs benign).
+### Key Features
 
-The project demonstrates a fully reproducible workflow from raw WGS/VCF data to ML-ready features and model evaluation.
+ - Scalable Orchestration: Powered by Nextflow DSL2 for seamless parallel execution.
+ - Robust Feature Engineering: automated parsing of complex VEP strings and one-hot encoding.
+ - Model Benchmarking: Side-by-side comparison of XGBoost, LightGBM, Random Forest, and Logistic Regression.
+ - Deterministic Environments: Fully locked dependencies via pip-compile and Docker support.
 
 ## Data Sources
 
@@ -27,17 +28,19 @@ Only publicly available datasets are used.
 ```bash
 WGS_VarML/
 ├── README.md
-├── requirement.txt
+├── requirements.txt - pinned dependency lockfile
+├── input.json      - input paramenters
+├── nextflow.config - tesource management & reporting profiles
 ├── .gitignore
-│
 ├── docker/         – lightweight Docker setup for reproducibility
-│   └── Dockerfile
-│
 ├── data/           – raw and processed datasets (not tracked)
 │   ├── raw/
 │   ├── reference/
+│   ├── splits/
 │   └── processed/
-│
+├── nextflow/       - nextflow DSL2 orchestration
+│   ├── main.nf                  - primary workflow entry point
+│   └── ...                      - atomic process definitions (Train, Infer, QC)
 ├── src/            – core ML and data processing code
 │   ├── 04_extract_features.py   - extract ML-ready features from VEP-annotated VCF
 │   ├── 05_QC_feature.py         - generate feature QC report
@@ -46,82 +49,93 @@ WGS_VarML/
 │   ├── 08_model_inference.py    - run inference on unlabeled data
 │   └── utils/
 │         └── config.py          - load configuration parameters       
-│
 ├── scripts/       – command-line entry points
 │   ├── 01_download_data.sh             - download ClinVar and other reference datasets
 │   ├── 02_preprocess_clinvar.sh        - normalize, filter, and prepare ClinVar VCF
 │   └── 03_run_vep_docker.sh            - annotate variants with VEP inside Docker
-│
 ├── config/
 │   └── config.yaml - configuration file
 ├── notebooks/      – exploratory analysis and visualization
 ├── annotations/    – annotation configs
-└── tests/          – test code
+├── results/        – pipeline outputs (Predictions, Reports, Artifacts)
+├── tests/          – test code
+└── LICENSE
 ```
 
-## Feature Extraction
+## Quick Start (Nextflow)
 
-The feature extraction step includes:
-
-- One-hot encoding of multi-value Consequence and single-value Impact
-- Retains numeric scores such as SIFT and PolyPhen
-- Maps CLNSIG to numeric ML labels (1=pathogenic, 0=benign, -1=unknown)
-- Optionally filters unknown variants (CLNSIG=-1) with --filter-unknown
-- Saves output as CSV or Parquet for downstream ML
-- Generate QC report (in html format)
+The entire pipeline is orchestrated via Nextflow. This handles data flow, parallelization, and ensures that the inference step uses the exact artifacts produced during training.
 
 ```bash
-python3 scripts/04_feature_extraction.py data/processed/clinvar.vep.vcf.gz --config config/config.yaml
+# 1. Install dependencies
+pip install -r requirements.txt
 
-python3 src/05_QC_feature.py data/processed/clinvar.vep.features.csv results/qc_report.html config/config.yaml
+# 2. Run the full pipeline
+nextflow run nextflow/main.nf -params-file input.json -resume
 ```
 
-## Machine Learning Tasks
+After completion, detailed performance and resource metrics are available in:
+```bash
+results/pipeline_info/execution_report.html
 
-- Binary classification (pathogenic vs benign)
-- Class imbalance handling
-- Chromosome-aware train/validation/test splits
+results/pipeline_info/pipeline_dag.html
+```
 
-### Models
+## Pipeline Workflow
 
-- Logistic Regression (baseline)
-- Random Forest
-- Gradient Boosting (XGBoost / LightGBM)
+### 1. Feature Extraction & QC
 
-### Evaluation Metrics
+Transforms raw VEP-annotated VCFs into memory-efficient Snappy-compressed Parquet matrices.
 
-- ROC-AUC
-- Precision–Recall AUC
-- Confusion matrix
-- Calibration analysis
+- Handles one-hot encoding for Consequence and Impact.
+
+- Generates an automated HTML QC Report to validate feature distributions and missingness.
+
+### 2. Machine Learning Engine
+
+The pipeline benchmarks four architectures simultaneously:
+
+- Baseline: Logistic Regression
+
+- Ensemble: Random Forest, XGBoost, LightGBM
+
+- Evaluation Strategy:
+
+  - Chromosome-aware stratified splitting to prevent data leakage.
+
+  - Metrics: ROC-AUC, PR-AUC, and Calibration analysis.
+
+### 3. Artifact-Driven Inference
+
+Pre-trained models are bundled with their specific imputer.joblib and feature_order.txt. This ensures zero-skew inference when scoring new, unlabeled variants.
+
+
+## Reproducibility
+
+- Docker Support
+
+For production environments, use the provided Docker profile to ensure OS-level consistency:
 
 ```bash
-python3 src/06_split_clinvar.py --input data/processed/clinvar.vep.features.parquet --outdir data/splits --config config/config.yaml
-python3 src/07_train_model.py data/splits/clinvar.vep.features.train.parquet --outdir results/models --config config/config.yaml --test-set data/splits/clinvar.vep.features.test.parquet
-python3 src/08_model_inference.py data/splits/clinvar.vep.features.infer.parquet results/models --outdir results/predictions
+nextflow run nextflow/main.nf -profile docker
 ```
 
-## Reproducibility (Docker)
-
-A lightweight Docker environment is provided for reproducible development:
-
-```bash
-# Build Docker image
-docker build -t wgs-varml .
-
-# Run interactively
-docker run -it -v "$PWD/data:/opt/data" wgs-varml
-```
-
-Large datasets and annotation tools (like VEP caches) are mounted at runtime for flexibility.
+- Requirements
+  - Python 3.9+
+  - Nextflow 23.10+
+  - Docker (Optional)
 
 ## Status
 
-🚧 In progress:
+✅ ClinVar preprocessing & VEP integration
 
-- ClinVar preprocessing and normalization
-- VEP annotation pipeline integration
-- Feature extraction with ML-ready encoding
-- Baseline model implementation and evaluation
+✅ Nextflow DSL2 Orchestration
 
+✅ Parallel Model Benchmarking (XGB/LGBM/RF/LR)
+
+✅ Automated QC & Reporting
+
+🚧 Hyperparameter optimization (Optuna integration)
+
+🚧 SHAP-based feature interpretability modules
 
