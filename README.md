@@ -1,4 +1,12 @@
 # WGS_VarML
+[![Python](https://img.shields.io/badge/python-3.9+-brightgreen.svg)](https://www.python.org/)
+[![Nextflow](https://img.shields.io/badge/nextflow-%E2%89%A523.10.0-24bd5e.svg)](https://www.nextflow.io/)
+[![XGBoost](https://img.shields.io/badge/XGBoost-stable-blue.svg)](https://xgboost.readthedocs.io/)
+[![LightGBM](https://img.shields.io/badge/LightGBM-stable-orange.svg)](https://lightgbm.readthedocs.io/)
+[![Scikit--Learn](https://img.shields.io/badge/Scikit--Learn-Model_Zoo-F7931E.svg)](https://scikit-learn.org/)
+[![Docker](https://img.shields.io/badge/docker-ready-2496ed.svg)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 ### Genomic Variant Pathogenicity Prediction Pipeline
 
 A scalable, reproducible Nextflow workflow for whole-genome sequencing (WGS) variant classification.
