@@ -1,0 +1,27 @@
+mkdir -p failed for path /.config/matplotlib: [Errno 13] Permission denied: '/.config'
+Matplotlib created a temporary cache directory at /tmp/matplotlib-01pdrnh0 because there was an issue with the default path (/.config/matplotlib); it is highly recommended to set the MPLCONFIGDIR environment variable to a writable directory, in particular to speed up the import of Matplotlib and to better support multiprocessing.
+[I 260511 19:25:34 config:36] Loaded config from config.yaml
+[I 260511 19:25:34 07_train_model:90] Accessing dataset: clinvar.train.parquet
+[D 260511 19:25:34 07_train_model:97] Filter complete. Retained 1394584 of 1394584 variants.
+[I 260511 19:25:34 ml_utils:38] Training with 35 features (including consequences and scores)
+/Users/janetx/Desktop/Janet/Projects/WGS_VarML/bin/utils/ml_utils.py:94: SettingWithCopyWarning: 
+A value is trying to be set on a copy of a slice from a DataFrame.
+Try using .loc[row_indexer,col_indexer] = value instead
+
+See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+  X[num_cols] = imputer.fit_transform(X[num_cols])
+[I 260511 19:25:39 07_train_model:105] Initializing LR classifier architecture.
+/usr/local/lib/python3.9/site-packages/sklearn/linear_model/_logistic.py:465: ConvergenceWarning: lbfgs failed to converge (status=1):
+STOP: TOTAL NO. of ITERATIONS REACHED LIMIT.
+
+Increase the number of iterations (max_iter) or scale the data as shown in:
+    https://scikit-learn.org/stable/modules/preprocessing.html
+Please also refer to the documentation for alternative solver options:
+    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression
+  n_iter_i = _check_optimize_result(
+[I 260511 19:27:12 07_train_model:158] [VAL] ROC-AUC: 0.9363 | PR-AUC: 0.8918
+[I 260511 19:27:12 07_train_model:222] Evaluating on independent hold-out set.
+[I 260511 19:27:12 07_train_model:90] Accessing dataset: clinvar.test.parquet
+[D 260511 19:27:12 07_train_model:97] Filter complete. Retained 185379 of 185379 variants.
+[I 260511 19:27:12 07_train_model:158] [TEST] ROC-AUC: 0.9394 | PR-AUC: 0.9072
+[I 260511 19:27:12 07_train_model:228] Workflow complete. Artifacts stored in .

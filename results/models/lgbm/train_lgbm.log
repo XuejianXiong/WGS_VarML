@@ -1,0 +1,27 @@
+mkdir -p failed for path /.config/matplotlib: [Errno 13] Permission denied: '/.config'
+Matplotlib created a temporary cache directory at /tmp/matplotlib-ae1ung45 because there was an issue with the default path (/.config/matplotlib); it is highly recommended to set the MPLCONFIGDIR environment variable to a writable directory, in particular to speed up the import of Matplotlib and to better support multiprocessing.
+[I 260511 19:28:14 config:36] Loaded config from config.yaml
+[I 260511 19:28:14 07_train_model:90] Accessing dataset: clinvar.train.parquet
+[D 260511 19:28:14 07_train_model:97] Filter complete. Retained 1394584 of 1394584 variants.
+[I 260511 19:28:14 ml_utils:38] Training with 35 features (including consequences and scores)
+/Users/janetx/Desktop/Janet/Projects/WGS_VarML/bin/utils/ml_utils.py:94: SettingWithCopyWarning: 
+A value is trying to be set on a copy of a slice from a DataFrame.
+Try using .loc[row_indexer,col_indexer] = value instead
+
+See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+  X[num_cols] = imputer.fit_transform(X[num_cols])
+[I 260511 19:28:18 07_train_model:105] Initializing LGBM classifier architecture.
+[I 260511 19:28:25 07_train_model:158] [VAL] ROC-AUC: 0.9375 | PR-AUC: 0.8951
+[I 260511 19:28:25 07_train_model:222] Evaluating on independent hold-out set.
+[I 260511 19:28:25 07_train_model:90] Accessing dataset: clinvar.test.parquet
+[D 260511 19:28:25 07_train_model:97] Filter complete. Retained 185379 of 185379 variants.
+[I 260511 19:28:26 07_train_model:158] [TEST] ROC-AUC: 0.9405 | PR-AUC: 0.9106
+[I 260511 19:28:26 07_train_model:228] Workflow complete. Artifacts stored in .
+[LightGBM] [Info] Number of positive: 298255, number of negative: 817412
+[LightGBM] [Info] Auto-choosing row-wise multi-threading, the overhead of testing was 0.038992 seconds.
+You can set `force_row_wise=true` to remove the overhead.
+And if memory is not enough, you can set `force_col_wise=true`.
+[LightGBM] [Info] Total Bins 619
+[LightGBM] [Info] Number of data points in the train set: 1115667, number of used features: 30
+[LightGBM] [Info] [binary:BoostFromScore]: pavg=0.500000 -> initscore=-0.000000
+[LightGBM] [Info] Start training from score -0.000000

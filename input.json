@@ -8,7 +8,7 @@
     "vep_vcf_input": "data/processed/clinvar.vep.vcf.gz",
     "ch_train_file": "data/splits/clinvar.train.parquet",
     "ch_test_file": "data/splits/clinvar.test.parquet",
-    "ch_infer_file": "data/splits/clinvar.infer.parquet",
+    "ch_infer_file": "data/splits/clinvar.infer_with_labels.parquet",
     "split_group_by": "chr",
     "config_yaml": "config/config.yaml",
     "vep_threads": 6,

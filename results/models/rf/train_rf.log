@@ -1,0 +1,19 @@
+mkdir -p failed for path /.config/matplotlib: [Errno 13] Permission denied: '/.config'
+Matplotlib created a temporary cache directory at /tmp/matplotlib-aj2s2rmt because there was an issue with the default path (/.config/matplotlib); it is highly recommended to set the MPLCONFIGDIR environment variable to a writable directory, in particular to speed up the import of Matplotlib and to better support multiprocessing.
+[I 260511 19:27:13 config:36] Loaded config from config.yaml
+[I 260511 19:27:13 07_train_model:90] Accessing dataset: clinvar.train.parquet
+[D 260511 19:27:13 07_train_model:97] Filter complete. Retained 1394584 of 1394584 variants.
+[I 260511 19:27:13 ml_utils:38] Training with 35 features (including consequences and scores)
+/Users/janetx/Desktop/Janet/Projects/WGS_VarML/bin/utils/ml_utils.py:94: SettingWithCopyWarning: 
+A value is trying to be set on a copy of a slice from a DataFrame.
+Try using .loc[row_indexer,col_indexer] = value instead
+
+See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+  X[num_cols] = imputer.fit_transform(X[num_cols])
+[I 260511 19:27:17 07_train_model:105] Initializing RF classifier architecture.
+[I 260511 19:27:52 07_train_model:158] [VAL] ROC-AUC: 0.9370 | PR-AUC: 0.8933
+[I 260511 19:27:52 07_train_model:222] Evaluating on independent hold-out set.
+[I 260511 19:27:52 07_train_model:90] Accessing dataset: clinvar.test.parquet
+[D 260511 19:27:52 07_train_model:97] Filter complete. Retained 185379 of 185379 variants.
+[I 260511 19:27:53 07_train_model:158] [TEST] ROC-AUC: 0.9402 | PR-AUC: 0.9094
+[I 260511 19:27:53 07_train_model:228] Workflow complete. Artifacts stored in .

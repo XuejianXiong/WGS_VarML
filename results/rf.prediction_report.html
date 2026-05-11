@@ -21,14 +21,27 @@
             
             <div class="metadata">
                 <strong>Model:</strong> .<br>
-                <strong>Timestamp:</strong> 2026-05-11 19:28:28<br>
-                <strong>Input Data:</strong> clinvar.infer.parquet<br>
+                <strong>Timestamp:</strong> 2026-05-11 21:14:41<br>
+                <strong>Input Data:</strong> clinvar.infer_with_labels.parquet<br>
                 <strong>Artifact Path:</strong> .<br>
                 <strong>Total Variants Scored:</strong> 273458
             </div>
 
             
-            <h2>Verification</h2><p><i>No ground-truth labels provided. Performance metrics skipped.</i></p>
+        <div class="metrics-grid">
+            <div class="metric-card">ROC-AUC: 0.9409</div>
+            <div class="metric-card">MCC: 0.7412</div>
+        </div>
+        
+            <h2>Verification Performance</h2><pre>              precision    recall  f1-score   support
+
+           0       0.95      0.91      0.93    202642
+           1       0.77      0.85      0.81     70816
+
+    accuracy                           0.90    273458
+   macro avg       0.86      0.88      0.87    273458
+weighted avg       0.90      0.90      0.90    273458
+</pre>
 
             <div class="footer">
                 Xuejian Xiong | WGS_VarML Bioinformatics Pipeline | Toronto, Canada
