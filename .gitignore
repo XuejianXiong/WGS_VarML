@@ -5,11 +5,9 @@
 # --- Bioinformatics Data & Large Files ---
 # Never commit raw or processed genomic data (VCFs, FASTAs, Indexes)
 data/**
-results/**
-!results/*.html
-!results/models/**
-!results/pipeline_info/**
-
+results/*.csv
+#results/*.html
+#results/models
 
 # --- Nextflow & Pipeline Metadata ---
 # Nextflow creates these directories during runtime

@@ -9,18 +9,20 @@
 
 ### Genomic Variant Pathogenicity Prediction Pipeline
 
-A scalable, reproducible Nextflow workflow for whole-genome sequencing (WGS) variant classification.
+**WGS_VarML** is an end-to-end, production-grade computational pipeline designed to predict the clinical significance of genomic variants using machine learning. It integrates high-confidence labels from ClinVar with functional annotations from VEP, gnomAD, and CADD to train and deploy supervised classifiers at scale.
 
-## Overview
 
-WGS_VarML is an end-to-end computational pipeline designed to predict the clinical significance of genomic variants using machine learning. It integrates high-confidence labels from ClinVar with functional annotations from VEP, gnomAD, and CADD to train and deploy supervised classifiers.
+## Key Features
 
-### Key Features
+- **Scalable Orchestration**: Built with Nextflow DSL2 for seamless parallel execution across local, HPC (Slurm), or Cloud environments.
 
- - Scalable Orchestration: Powered by Nextflow DSL2 for seamless parallel execution.
- - Robust Feature Engineering: automated parsing of complex VEP strings and one-hot encoding.
- - Model Benchmarking: Side-by-side comparison of XGBoost, LightGBM, Random Forest, and Logistic Regression.
- - Deterministic Environments: Fully locked dependencies via pip-compile and Docker support.
+- **Portable Infrastructure**: Environment parity via Docker ensures "it works on my machine" is "it works everywhere."
+
+- **Model Benchmarking**: Automated side-by-side comparison of XGBoost, LightGBM, Random Forest, and Logistic Regression.
+
+- **Data Integrity**: Chromosome-aware stratified splitting to prevent data leakage between training and evaluation sets.
+
+- **Artifact Management**: Bundle models with specific imputer.joblib and feature_order files for zero-skew inference.
 
 ## Data Sources
 
@@ -36,115 +38,98 @@ Only publicly available datasets are used.
 ```bash
 WGS_VarML/
 ├── README.md
-├── requirements.txt - pinned dependency lockfile
-├── input.json      - input paramenters
-├── nextflow.config - tesource management & reporting profiles
+├── main.nf                   - primary workflow entry point (DSL2)
+├── nextflow.config           - resource management '&' Docker profiles
+├── input.json                - pipeline runtime parameters
+├── requirements.txt          - pinned python dependency lockfile
 ├── .gitignore
-├── docker/         – lightweight Docker setup for reproducibility
-├── data/           – raw and processed datasets (not tracked)
-│   ├── raw/
-│   ├── reference/
-│   ├── splits/
-│   └── processed/
-├── nextflow/       - nextflow DSL2 orchestration
-│   ├── main.nf                  - primary workflow entry point
-│   └── ...                      - atomic process definitions (Train, Infer, QC)
-├── src/            – core ML and data processing code
-│   ├── 04_extract_features.py   - extract ML-ready features from VEP-annotated VCF
-│   ├── 05_QC_feature.py         - generate feature QC report
-│   ├── 06_split_clinvar.py      - split data into train / test / infer
-│   ├── 07_train_model.py        - train ML model
-│   ├── 08_model_inference.py    - run inference on unlabeled data
+├── bin/                      – executable ML engines ('python' scripts)
+│   ├── 04_extract_features   - extract ML-ready features from VEP-annotated VCF
+│   ├── 05_QC_feature         - generate feature QC report
+│   ├── 06_split_clinvar      - leakage-aware dataset partitioning
+│   ├── 07_train_model        - distributed model training
+│   ├── 08_model_inference    - high-throughput variant scoring
 │   └── utils/
-│         └── config.py          - load configuration parameters       
-├── scripts/       – command-line entry points
+│         └── config.py       - load configuration parameters       
+├── modules/                  - atomic Nextflow process definitions
+├── docker/                   – lightweight Docker setup for reproducibility
+├── config/                   
+│   └── config.yaml           - YAML-based scientific hyper-parameters
+├── scripts/                  – bash helpers for data ingestion/VEP annotation
 │   ├── 01_download_data.sh             - download ClinVar and other reference datasets
 │   ├── 02_preprocess_clinvar.sh        - normalize, filter, and prepare ClinVar VCF
 │   └── 03_run_vep_docker.sh            - annotate variants with VEP inside Docker
-├── config/
-│   └── config.yaml - configuration file
-├── notebooks/      – exploratory analysis and visualization
-├── annotations/    – annotation configs
-├── results/        – pipeline outputs (Predictions, Reports, Artifacts)
-├── tests/          – test code
+├── data/                     – raw, reference, processed and splits datasets
+├── results/                  – organized outputs: Models, Reports, Predictions
+├── tests/                    – test code
 └── LICENSE
 ```
 
-## Quick Start (Nextflow)
+## Quick Start
 
 The entire pipeline is orchestrated via Nextflow. This handles data flow, parallelization, and ensures that the inference step uses the exact artifacts produced during training.
+
+*Note*: This pipeline requires the VEP cache. Download and unzip the cache to a local directory and update config.yaml with the path.
+
+### Prerequisites
+- Nextflow (23.10.0+)
+- Docker
+- Python 3.9+
+
+### Execution
+
+The pipeline is designed to be executed from the project root. The Docker profile handles all dependencies automatically.
 
 ```bash
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Run the full pipeline
-nextflow run nextflow/main.nf -params-file input.json -resume
+# 2. Build docker image
+docker build -t wgs-varml:latest -f docker/Dockerfile .
+
+# 3. Run the full pipeline with Docker
+nextflow run main.nf -profile docker -params-file input.json
 ```
+
+### Outputs & Monitoring
 
 After completion, detailed performance and resource metrics are available in:
-```bash
-results/pipeline_info/execution_report.html
 
-results/pipeline_info/pipeline_dag.html
-```
+- Execution Report: ```results/pipeline_info/execution_report.html```
+- Dependency Graph: ```results/pipeline_info/pipeline_dag.html```
+- Model Performance: ```results/models/```
 
-## Pipeline Workflow
+## Pipeline Logic
 
 ### 1. Feature Extraction & QC
 
-Transforms raw VEP-annotated VCFs into memory-efficient Snappy-compressed Parquet matrices.
-
-- Handles one-hot encoding for Consequence and Impact.
-
-- Generates an automated HTML QC Report to validate feature distributions and missingness.
+Transforms raw VEP-annotated VCFs into memory-efficient, Snappy-compressed Apache Parquet matrices. It handles one-hot encoding for complex Consequence/Impact strings and generates an automated HTML QC Report to validate feature distributions.
 
 ### 2. Machine Learning Engine
 
-The pipeline benchmarks four architectures simultaneously:
+The ML engine trains four architectures simultaneously:
 
-- Baseline: Logistic Regression
+- Gradient Boosting: XGBoost & LightGBM
 
-- Ensemble: Random Forest, XGBoost, LightGBM
+- Ensemble: Random Forest
 
-- Evaluation Strategy:
+- Baseline: Logistic Regression (L2 regularized)
 
-  - Chromosome-aware stratified splitting to prevent data leakage.
+### 3. High-Fidelity Inference
 
-  - Metrics: ROC-AUC, PR-AUC, and Calibration analysis.
+The inference module stages pre-trained artifacts (.joblib) alongside unlabeled genomic features. This ensures the inference environment perfectly matches the training environment, preventing feature-order mismatch errors.
 
-### 3. Artifact-Driven Inference
+## Status & Roadmap
 
-Pre-trained models are bundled with their specific imputer.joblib and feature_order.txt. This ensures zero-skew inference when scoring new, unlabeled variants.
+✅ v2.0.0 Ready: DSL2 Orchestration, Docker Support and Parallel Training.
 
+🚧 In Progress:
 
-## Reproducibility
+[ ] Optuna Integration: Automated hyperparameter optimization.
 
-### Docker Support
+[ ] Explainability: SHAP-based feature importance modules.
 
-For production environments, use the provided Docker profile to ensure OS-level consistency:
-
-```bash
-nextflow run nextflow/main.nf -profile docker
-```
-### Requirements
-  - Python 3.9+
-  - Nextflow 23.10+
-  - Docker (Optional)
-
-## Status
-
-✅ ClinVar preprocessing & VEP integration
-
-✅ Nextflow DSL2 Orchestration
-
-✅ Parallel Model Benchmarking (XGB/LGBM/RF/LR)
-
-✅ Automated QC & Reporting
-
-🚧 Hyperparameter optimization (Optuna integration)
-
-🚧 SHAP-based feature interpretability modules
+[ ] Variant Prioritization: Integration of gene-level constraint scores (pLI/LOEUF).
 
 ## License
 

@@ -66,7 +66,7 @@ process RUN_VEP {
     """
     ABS_VCF=\$(realpath ${norm_vcf})
 
-    bash ${projectDir}/../scripts/03_run_vep_docker.sh \\
+    bash ${projectDir}/scripts/03_run_vep_docker.sh \\
         "\$ABS_VCF" \\
         ${out_name} \\
         --threads ${task.cpus}
