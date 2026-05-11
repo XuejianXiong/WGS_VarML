@@ -38,6 +38,7 @@
 process FEATURE_EXTRACTION {
     tag "Extract: ${vcf.baseName}"
     label 'process_medium' 
+    container 'wgs-varml:latest'
 
     // Persistence layer: Structured as the primary input for Step 5 (Splitting)
     publishDir "${params.datadir}/processed", mode: params.publish_dir_mode
@@ -61,7 +62,7 @@ process FEATURE_EXTRACTION {
     def filter = params.filter_unknown ? '--filter-unknown' : ''
 
     """
-    python3 ${baseDir}/../src/04_extract_features.py \\
+    04_extract_features \\
         ${vcf} \\
         --config ${config} \\
         --format ${fmt} \\

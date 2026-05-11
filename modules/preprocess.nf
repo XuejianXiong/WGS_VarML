@@ -66,7 +66,7 @@ process PREPROCESS_VCF {
           to ensure proper Nextflow staging and absolute path resolution.
     */
     """
-    bash ${projectDir}/../scripts/02_preprocess_clinvar.sh \\
+    bash ${projectDir}/scripts/02_preprocess_clinvar.sh \\
         ${vcf} \\
         ${ref} \\
         .

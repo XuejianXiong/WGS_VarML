@@ -34,6 +34,7 @@
 process INFER_VARIANTS {
     tag "Predict: ${model_type}"
     label 'process_medium'
+    container 'wgs-varml:latest'
     
     // Results are published to a dedicated predictions sub-folder for better organization
     publishDir "${params.outdir}", mode: params.publish_dir_mode
@@ -43,7 +44,8 @@ process INFER_VARIANTS {
     path infer_features
 
     output:
-    path "${model_type}_predictions.csv", emit: infer_results
+    path "${model_type}_predictions.csv",        emit: infer_results
+    path "${model_type}.prediction_report.html", emit: infer_report
 
     script:
     """
@@ -51,7 +53,7 @@ process INFER_VARIANTS {
     # The --model_dir is set to '.' because Nextflow stages all input path 
     # components directly into the task's top-level working directory.
     
-    python3 ${projectDir}/../src/08_model_inference.py \
+    08_model_inference \
         ${infer_features} \
         . \
         --outdir .
@@ -61,5 +63,6 @@ process INFER_VARIANTS {
     # collision and ensure traceability in the final results directory.
     
     mv *predictions.csv ${model_type}_predictions.csv
+    mv *prediction_report.html ${model_type}.prediction_report.html
     """
 }

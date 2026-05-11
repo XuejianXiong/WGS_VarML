@@ -39,6 +39,7 @@
 process QC_FEATURES {
     tag "QC: ${feature_parquet.baseName}"
     label 'process_low'
+    container 'wgs-varml:latest'
 
     // Routes diagnostic artifacts to the reporting directory
     publishDir "${params.outdir}", mode: params.publish_dir_mode
@@ -60,7 +61,7 @@ process QC_FEATURES {
     def report_name = "${feature_parquet.baseName}_report.html"
 
     """
-    python3 ${baseDir}/../src/05_QC_feature.py \\
+    05_QC_feature \\
         ${feature_parquet} \\
         --output ${report_name} \\
         --config ${config}

@@ -44,6 +44,7 @@
 process SPLIT_DATA {
     tag "Split: ${feature_matrix.baseName} [by ${group_by}]"
     label 'process_medium'
+    container 'wgs-varml:latest'
     
     // Persistence: Centralized storage for model training stage
     publishDir "${params.datadir}/splits", mode: params.publish_dir_mode
@@ -67,7 +68,7 @@ process SPLIT_DATA {
        be managed by Nextflow's publishing and caching system.
     */
     """
-    python3 ${projectDir}/../src/06_split_clinvar.py \\
+    06_split_clinvar \\
         --input ${feature_matrix} \\
         --group-by ${group_by} \\
         --outdir .

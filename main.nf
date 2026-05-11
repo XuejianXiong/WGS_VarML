@@ -22,13 +22,13 @@ nextflow.enable.dsl=2
 
 // --- Import Modules ---
 // Modules are resolved relative to this file's directory
-include { PREPROCESS_VCF     } from './preprocess.nf'
-include { RUN_VEP            } from './annotation.nf' 
-include { FEATURE_EXTRACTION } from './feature.nf'
-include { QC_FEATURES        } from './qc_feature.nf'
-include { SPLIT_DATA         } from './split_data.nf'
-include { TRAIN_MODEL        } from './train.nf'
-include { INFER_VARIANTS     } from './inference.nf'
+include { PREPROCESS_VCF     } from './modules/preprocess.nf'
+include { RUN_VEP            } from './modules/annotation.nf' 
+include { FEATURE_EXTRACTION } from './modules/feature.nf'
+include { QC_FEATURES        } from './modules/qc_feature.nf'
+include { SPLIT_DATA         } from './modules/split_data.nf'
+include { TRAIN_MODEL        } from './modules/train.nf'
+include { INFER_VARIANTS     } from './modules/inference.nf'
 
 workflow {
     

@@ -39,6 +39,7 @@
 process TRAIN_MODEL {
     tag "Train: ${model_type} on ${train_features.baseName}"
     label 'process_high'
+    container 'wgs-varml:latest'
     
     // Organizes results into model-specific subdirectories for easy comparison
     publishDir "${params.outdir}/models/${model_type}", 
@@ -70,7 +71,7 @@ process TRAIN_MODEL {
        to allow Nextflow to manage the staging and publishing lifecycle.
     */
     """
-    python3 ${projectDir}/../src/07_train_model.py \\
+    07_train_model \\
         ${train_features} \\
         --model-type ${model_type} \\
         --test-set ${test_features} \\
